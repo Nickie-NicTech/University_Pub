@@ -42,6 +42,7 @@ DEBUG = True
 
 <<<<<<< HEAD
 <<<<<<< HEAD
+<<<<<<< HEAD
 =======
 >>>>>>> 843c401 (Configure Railway hosts and CORS)
 ALLOWED_HOSTS = [
@@ -62,6 +63,9 @@ ALLOWED_HOSTS = []
     if host.strip()
 ]
 >>>>>>> 843c401 (Configure Railway hosts and CORS)
+=======
+ALLOWED_HOSTS = []
+>>>>>>> 4b80d89 (update cors origis)
 
 
 # Application definition
@@ -93,6 +97,7 @@ MIDDLEWARE = [
 CORS_ALLOWED_ORIGINS = [
 <<<<<<< HEAD
 <<<<<<< HEAD
+<<<<<<< HEAD
     "https://frontend-production-b158.up.railway.app",
     "http://localhost:3000",  # For local development
 =======
@@ -107,6 +112,10 @@ CORS_ALLOWED_ORIGINS = [
     ).split(',')
     if origin.strip()
 >>>>>>> 843c401 (Configure Railway hosts and CORS)
+=======
+    "http://localhost:3000",
+    "http://localhost:5173",
+>>>>>>> 4b80d89 (update cors origis)
 ]
 
 ROOT_URLCONF = 'UNIPUB.urls'
