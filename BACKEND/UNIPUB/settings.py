@@ -32,7 +32,7 @@ ALLOWED_HOSTS = [
     host.strip()
     for host in os.environ.get(
         'ALLOWED_HOSTS',
-        'https://backend-production-bf00a.up.railway.app,localhost,127.0.0.1'
+        'backend-production-bf00a.up.railway.app,localhost,127.0.0.1'
     ).split(',')
     if host.strip()
 ]
