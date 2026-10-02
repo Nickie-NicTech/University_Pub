@@ -188,6 +188,7 @@ class AdminPortalLoginView(APIView):
     def post(self, request):
         username = str(request.data.get('username', ''))
         password = str(request.data.get('password', ''))
+<<<<<<< HEAD
         configured_password = settings.ADMIN_PORTAL_PASSWORD
         if not configured_password:
             return Response(
@@ -197,6 +198,11 @@ class AdminPortalLoginView(APIView):
         if not (
             secrets.compare_digest(username, settings.ADMIN_PORTAL_USERNAME)
             and secrets.compare_digest(password, configured_password)
+=======
+        if not (
+            secrets.compare_digest(username, settings.ADMIN_PORTAL_USERNAME)
+            and secrets.compare_digest(password, settings.ADMIN_PORTAL_PASSWORD)
+>>>>>>> 532f38b (add new files and initial commit)
         ):
             return Response({'detail': 'Invalid administrator credentials.'}, status=status.HTTP_401_UNAUTHORIZED)
 
@@ -360,6 +366,7 @@ class BroadcastMessageView(APIView):
         serializer.is_valid(raise_exception=True)
         message = serializer.save(created_by=request.user)
         return Response(BroadcastMessageSerializer(message).data, status=status.HTTP_201_CREATED)
+<<<<<<< HEAD
 
 
 class AdminBroadcastListView(APIView):
@@ -390,3 +397,5 @@ class AdminBroadcastDetailView(APIView):
         message = get_object_or_404(BroadcastMessage, pk=pk)
         message.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
+=======
+>>>>>>> 532f38b (add new files and initial commit)

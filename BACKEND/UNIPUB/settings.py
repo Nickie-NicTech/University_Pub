@@ -21,13 +21,20 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # See https://docs.djangoproject.com/en/6.1/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
+<<<<<<< HEAD
 SECRET_KEY = os.environ.get('DJANGO_SECRET_KEY', 'local-development-key-not-for-production')
 ADMIN_PORTAL_USERNAME = os.environ.get('UNIPUB_ADMIN_USERNAME', 'admin')
 ADMIN_PORTAL_PASSWORD = os.environ.get('UNIPUB_ADMIN_PASSWORD', 'admin')
+=======
+SECRET_KEY = 'django-insecure-b)92lhhato+v1ihi)_enznxb&q$*4kju11*l-ky8!_ihv$o*=m'
+ADMIN_PORTAL_USERNAME = os.environ.get('UNIPUB_ADMIN_USERNAME', 'admin')
+ADMIN_PORTAL_PASSWORD = os.environ.get('UNIPUB_ADMIN_PASSWORD', 'UniPubAdmin2026!')
+>>>>>>> 532f38b (add new files and initial commit)
 
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
+<<<<<<< HEAD
 ALLOWED_HOSTS = [
     host.strip()
     for host in os.environ.get(
@@ -36,6 +43,9 @@ ALLOWED_HOSTS = [
     ).split(',')
     if host.strip()
 ]
+=======
+ALLOWED_HOSTS = []
+>>>>>>> 532f38b (add new files and initial commit)
 
 
 # Application definition
@@ -65,13 +75,21 @@ MIDDLEWARE = [
 ]
 
 CORS_ALLOWED_ORIGINS = [
+<<<<<<< HEAD
     "https://frontend-production-b158.up.railway.app",
     "http://localhost:3000",  # For local development
+=======
+    "http://localhost:3000",
+    "http://localhost:5173",
+>>>>>>> 532f38b (add new files and initial commit)
 ]
 
 ROOT_URLCONF = 'UNIPUB.urls'
 
+<<<<<<< HEAD
 
+=======
+>>>>>>> 532f38b (add new files and initial commit)
 TEMPLATES = [
     {
         'BACKEND': 'django.template.backends.django.DjangoTemplates',
@@ -128,7 +146,11 @@ AUTH_PASSWORD_VALIDATORS = [
     },
 ]
 
+<<<<<<< HEAD
 CORS_ALLOW_CREDENTIALS = True
+=======
+
+>>>>>>> 532f38b (add new files and initial commit)
 # Internationalization
 # https://docs.djangoproject.com/en/6.1/topics/i18n/
 
@@ -147,7 +169,11 @@ USE_TZ = True
 STATIC_URL = 'static/'
 MEDIA_URL = 'media/'
 MEDIA_ROOT = BASE_DIR / 'media'
+<<<<<<< HEAD
  
+=======
+
+>>>>>>> 532f38b (add new files and initial commit)
 
 # Email
 # https://docs.djangoproject.com/en/6.1/topics/email/#topic-email-configuration

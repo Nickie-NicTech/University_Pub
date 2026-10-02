@@ -3,7 +3,11 @@ import { BrowserRouter as Router, Routes, Route, Navigate, Link } from 'react-ro
 import { jwtDecode } from 'jwt-decode';
 import { BookOpen, Library, LogIn, LogOut, ShieldCheck, UserPlus, UserRound } from 'lucide-react';
 import Login from './components/Login';
+<<<<<<< HEAD
 import SignUp from './components/signUp';
+=======
+import SignUp from './components/SignUp';
+>>>>>>> 532f38b (add new files and initial commit)
 import Publications from './components/Publications';
 import AccountSidebar from './components/AccountSidebar';
 import AdminPortal from './components/AdminPortal';

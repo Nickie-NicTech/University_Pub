@@ -105,7 +105,10 @@
 .admin-application-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
 .admin-broadcast-form { display: grid; gap: 13px; }
 .admin-broadcast-form textarea { min-height: 96px; resize: vertical; }
+<<<<<<< HEAD
 .admin-broadcast-form-actions, .admin-broadcast-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+=======
+>>>>>>> 532f38b (add new files and initial commit)
 .admin-broadcast-form .admin-primary { justify-self: start; }
 .admin-broadcast-list { margin-top: 26px; }
 .admin-broadcast-list h2 { margin: 0 0 10px; color: var(--admin-ink); font-size: 16px; }
@@ -117,6 +120,7 @@
 .admin-directory-tools input { width: 88px; height: 35px; padding: 5px 8px; box-sizing: border-box; border: 1px solid var(--admin-line); border-radius: 4px; color: var(--admin-ink); font: inherit; }
 .admin-search select { min-width: 130px; height: 34px; border: 0; outline: none; color: var(--admin-ink); background: transparent; font: inherit; font-size: 12px; }
 .admin-broadcast-item { margin-bottom: 9px; padding: 15px 17px; border: 1px solid var(--admin-line); border-radius: 5px; background: #fff; }
+<<<<<<< HEAD
 .admin-broadcast-item.is-retracted { background: #f7f8f7; }
 .admin-broadcast-item-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .admin-broadcast-date { color: var(--admin-muted); font-size: 10px; }
@@ -126,6 +130,11 @@
 .admin-broadcast-actions .admin-secondary { min-height: 31px; font-size: 11px; }
 .admin-danger-text { min-height: 31px; display: inline-flex; align-items: center; gap: 5px; padding: 0 8px; border: 1px solid transparent; border-radius: 4px; color: #9a4a40; background: transparent; font: inherit; font-size: 11px; font-weight: 700; cursor: pointer; }
 .admin-danger-text:hover { background: #fae9e5; }
+=======
+.admin-broadcast-date { color: var(--admin-muted); font-size: 10px; }
+.admin-broadcast-item h3 { margin: 7px 0 4px; font-size: 14px; }
+.admin-broadcast-item p { margin-bottom: 10px; color: #54696e; font-size: 12px; line-height: 1.5; white-space: pre-wrap; }
+>>>>>>> 532f38b (add new files and initial commit)
 .admin-empty { padding: 19px; color: #7b8b8e; text-align: center; font-size: 12px; }
 .admin-alert { margin: 0 0 14px; padding: 10px 12px; border: 1px solid #e5b9ae; border-radius: 4px; color: #873b32; background: #fff2ef; font-size: 12px; }
 .admin-login-page { --admin-ink: #182b35; --admin-muted: #71828a; min-height: 100%; display: grid; grid-template-columns: minmax(240px, 0.8fr) minmax(320px, 1.2fr); color: var(--admin-ink); background: #f4f7f4; font-family: 'Aptos', 'Segoe UI', sans-serif; }

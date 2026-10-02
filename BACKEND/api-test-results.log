@@ -1,0 +1,47 @@
+Creating test database for alias 'default' ('file:memorydb_default?mode=memory&cache=shared')...
+Found 9 test(s).
+Operations to perform:
+  Synchronize unmigrated apps: corsheaders, messages, rest_framework, staticfiles
+  Apply all migrations: admin, api, auth, contenttypes, sessions
+Synchronizing apps without migrations:
+  Creating tables...
+    Running deferred SQL...
+Running migrations:
+  Applying contenttypes.0001_initial... OK
+  Applying auth.0001_initial... OK
+  Applying admin.0001_initial... OK
+  Applying admin.0002_logentry_remove_auto_add... OK
+  Applying admin.0003_logentry_add_action_flag_choices... OK
+  Applying api.0001_initial... OK
+  Applying api.0002_publication_file_attachment... OK
+  Applying api.0003_authorprofile_first_name_authorprofile_last_name_and_more... OK
+  Applying api.0004_alter_authorprofile_institution... OK
+  Applying contenttypes.0002_remove_content_type_name... OK
+  Applying auth.0002_alter_permission_name_max_length... OK
+  Applying auth.0003_alter_user_email_max_length... OK
+  Applying auth.0004_alter_user_username_opts... OK
+  Applying auth.0005_alter_user_last_login_null... OK
+  Applying auth.0006_require_contenttypes_0002... OK
+  Applying auth.0007_alter_validators_add_error_messages... OK
+  Applying auth.0008_alter_user_username_max_length... OK
+  Applying auth.0009_alter_user_last_name_max_length... OK
+  Applying auth.0010_alter_group_name_max_length... OK
+  Applying auth.0011_update_proxy_permissions... OK
+  Applying auth.0012_alter_user_first_name_max_length... OK
+  Applying sessions.0001_initial...test_authenticated_user_can_upload_publication_without_authors_field (api.tests.PublicationTests.test_authenticated_user_can_upload_publication_without_authors_field) ... ok
+test_author_can_be_created_with_details_and_searched (api.tests.PublicationTests.test_author_can_be_created_with_details_and_searched) ... ok
+test_create_publication (api.tests.PublicationTests.test_create_publication) ... ok
+test_login_access_token_authorizes_publication_upload (api.tests.PublicationTests.test_login_access_token_authorizes_publication_upload) ... ok
+test_only_owner_can_edit_publication (api.tests.PublicationTests.test_only_owner_can_edit_publication) ... ok
+test_only_owner_can_request_publication_deletion (api.tests.PublicationTests.test_only_owner_can_request_publication_deletion) ... ok
+test_publication_can_be_created_with_selected_authors (api.tests.PublicationTests.test_publication_can_be_created_with_selected_authors) ... ok
+test_token_includes_username_and_profile_role (api.tests.TokenClaimsTests.test_token_includes_username_and_profile_role) ... ok
+test_token_without_profile_uses_member_role (api.tests.TokenClaimsTests.test_token_without_profile_uses_member_role) ... ok
+
+----------------------------------------------------------------------
+Ran 9 tests in 34.899s
+
+OK
+Destroying test database for alias 'default' ('file:memorydb_default?mode=memory&cache=shared')...
+ OK
+System check identified no issues (0 silenced).
