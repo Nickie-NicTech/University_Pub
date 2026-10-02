@@ -28,7 +28,14 @@ ADMIN_PORTAL_PASSWORD = os.environ.get('UNIPUB_ADMIN_PASSWORD', '')
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = [
+    host.strip()
+    for host in os.environ.get(
+        'ALLOWED_HOSTS',
+        'backend-production-bf00a.up.railway.app,localhost,127.0.0.1',
+    ).split(',')
+    if host.strip()
+]
 
 
 # Application definition
