@@ -23,7 +23,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 # SECURITY WARNING: keep the secret key used in production secret!
 SECRET_KEY = os.environ.get('DJANGO_SECRET_KEY', 'local-development-key-not-for-production')
 ADMIN_PORTAL_USERNAME = os.environ.get('UNIPUB_ADMIN_USERNAME', 'admin')
-ADMIN_PORTAL_PASSWORD = os.environ.get('UNIPUB_ADMIN_PASSWORD', '')
+ADMIN_PORTAL_PASSWORD = os.environ.get('UNIPUB_ADMIN_PASSWORD', 'admin')
 
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
