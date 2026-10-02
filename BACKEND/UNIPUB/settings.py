@@ -22,6 +22,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 
 # SECURITY WARNING: keep the secret key used in production secret!
 <<<<<<< HEAD
+<<<<<<< HEAD
 SECRET_KEY = os.environ.get('DJANGO_SECRET_KEY', 'local-development-key-not-for-production')
 ADMIN_PORTAL_USERNAME = os.environ.get('UNIPUB_ADMIN_USERNAME', 'admin')
 ADMIN_PORTAL_PASSWORD = os.environ.get('UNIPUB_ADMIN_PASSWORD', 'admin')
@@ -30,6 +31,11 @@ SECRET_KEY = 'django-insecure-b)92lhhato+v1ihi)_enznxb&q$*4kju11*l-ky8!_ihv$o*=m
 ADMIN_PORTAL_USERNAME = os.environ.get('UNIPUB_ADMIN_USERNAME', 'admin')
 ADMIN_PORTAL_PASSWORD = os.environ.get('UNIPUB_ADMIN_PASSWORD', 'UniPubAdmin2026!')
 >>>>>>> 532f38b (add new files and initial commit)
+=======
+SECRET_KEY = os.environ.get('DJANGO_SECRET_KEY', 'local-development-key-not-for-production')
+ADMIN_PORTAL_USERNAME = os.environ.get('UNIPUB_ADMIN_USERNAME', 'admin')
+ADMIN_PORTAL_PASSWORD = os.environ.get('UNIPUB_ADMIN_PASSWORD', '')
+>>>>>>> 3936b86 (end)
 
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
