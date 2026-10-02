@@ -26,7 +26,7 @@ export default function AdminPortal({ isAdmin, onLoginSuccess, onLogout }) {
         try {
             const [metrics, people, applications, messages, directoryRecords] = await Promise.all([
                 API.get('admin/analytics/'), API.get('admin/users/'),
-                API.get('admin/reviewer-requests/'), API.get('broadcasts/'),
+                API.get('admin/reviewer-requests/'), API.get('admin/broadcasts/'),
                 API.get('admin/university-directory/'),
             ]);
             setError('');
@@ -208,6 +208,14 @@ function Broadcasts({ messages, onRefresh }) {
     const [message, setMessage] = useState('');
     const [error, setError] = useState('');
     const [busy, setBusy] = useState(false);
+    const [editingId, setEditingId] = useState(null);
+
+    const resetForm = () => {
+        setTitle('');
+        setMessage('');
+        setEditingId(null);
+    };
+
     const submit = async (event) => {
         event.preventDefault(); setBusy(true); setError('');
         try {
@@ -243,8 +251,8 @@ function Broadcasts({ messages, onRefresh }) {
     return <>
         <div className="admin-section-intro"><div><h2>Broadcast messages</h2><p>Publish an announcement visible to every signed-in user.</p></div></div>
         {error && <div className="admin-alert" role="alert">{error}</div>}
-        <form className="admin-panel admin-broadcast-form" onSubmit={submit}><span className="admin-panel-kicker">NEW ANNOUNCEMENT</span><label>Headline<input maxLength={160} value={title} onChange={(event) => setTitle(event.target.value)} required placeholder="e.g. Planned repository maintenance" /></label><label>Message<textarea rows={4} value={message} onChange={(event) => setMessage(event.target.value)} required placeholder="Write your announcement for all users..." /></label><button className="admin-primary compact" disabled={busy}><Bell size={16} /> {busy ? 'Publishing...' : 'Publish to all users'}</button></form>
-        <section className="admin-broadcast-list"><h2>Published messages</h2>{messages.map((item) => <article className="admin-broadcast-item" key={item.id}><span className="admin-broadcast-date">{new Date(item.created_at).toLocaleString()}</span><h3>{item.title}</h3><p>{item.message}</p><span className="admin-status approved">Active for all users</span></article>)}{messages.length === 0 && <p className="admin-empty">No messages published yet.</p>}</section>
+        <form className="admin-panel admin-broadcast-form" onSubmit={submit}><span className="admin-panel-kicker">{editingId ? 'EDIT ANNOUNCEMENT' : 'NEW ANNOUNCEMENT'}</span><label>Headline<input maxLength={160} value={title} onChange={(event) => setTitle(event.target.value)} required placeholder="e.g. Planned repository maintenance" /></label><label>Message<textarea rows={4} value={message} onChange={(event) => setMessage(event.target.value)} required placeholder="Write your announcement for all users..." /></label><div className="admin-broadcast-form-actions"><button className="admin-primary compact" disabled={busy}>{editingId ? <Pencil size={16} /> : <Bell size={16} />} {busy ? 'Saving...' : editingId ? 'Save changes' : 'Publish to all users'}</button>{editingId && <button type="button" className="admin-secondary" onClick={resetForm}>Cancel edit</button>}</div></form>
+        <section className="admin-broadcast-list"><h2>Broadcast history</h2>{messages.map((item) => <article className={`admin-broadcast-item ${item.is_active ? '' : 'is-retracted'}`} key={item.id}><div className="admin-broadcast-item-head"><span className="admin-broadcast-date">{new Date(item.created_at).toLocaleString()}</span><span className={`admin-status ${item.is_active ? 'approved' : 'rejected'}`}>{item.is_active ? 'Active for all users' : 'Retracted'}</span></div><h3>{item.title}</h3><p>{item.message}</p><div className="admin-broadcast-actions"><button type="button" className="admin-secondary" onClick={() => editMessage(item)}><Pencil size={14} /> Edit</button><button type="button" className="admin-secondary" onClick={() => toggleActive(item)}>{item.is_active ? <><X size={14} /> Retract</> : <><Check size={14} /> Restore</>}</button><button type="button" className="admin-danger-text" onClick={() => deleteMessage(item)}><Trash2 size={14} /> Delete</button></div></article>)}{messages.length === 0 && <p className="admin-empty">No messages published yet.</p>}</section>
     </>;
 }
 

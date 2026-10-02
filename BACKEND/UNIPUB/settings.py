@@ -41,10 +41,14 @@ ADMIN_PORTAL_PASSWORD = os.environ.get('UNIPUB_ADMIN_PASSWORD', '')
 DEBUG = True
 
 <<<<<<< HEAD
+<<<<<<< HEAD
+=======
+>>>>>>> 843c401 (Configure Railway hosts and CORS)
 ALLOWED_HOSTS = [
     host.strip()
     for host in os.environ.get(
         'ALLOWED_HOSTS',
+<<<<<<< HEAD
         'backend-production-bf00a.up.railway.app,localhost,127.0.0.1'
     ).split(',')
     if host.strip()
@@ -52,6 +56,12 @@ ALLOWED_HOSTS = [
 =======
 ALLOWED_HOSTS = []
 >>>>>>> 532f38b (add new files and initial commit)
+=======
+        'backend-production-bf00a.up.railway.app,localhost,127.0.0.1',
+    ).split(',')
+    if host.strip()
+]
+>>>>>>> 843c401 (Configure Railway hosts and CORS)
 
 
 # Application definition
@@ -82,12 +92,21 @@ MIDDLEWARE = [
 
 CORS_ALLOWED_ORIGINS = [
 <<<<<<< HEAD
+<<<<<<< HEAD
     "https://frontend-production-b158.up.railway.app",
     "http://localhost:3000",  # For local development
 =======
     "http://localhost:3000",
     "http://localhost:5173",
 >>>>>>> 532f38b (add new files and initial commit)
+=======
+    origin.strip()
+    for origin in os.environ.get(
+        'CORS_ALLOWED_ORIGINS',
+        'https://frontend-production-b158.up.railway.app,http://localhost:3000,http://localhost:5173',
+    ).split(',')
+    if origin.strip()
+>>>>>>> 843c401 (Configure Railway hosts and CORS)
 ]
 
 ROOT_URLCONF = 'UNIPUB.urls'
