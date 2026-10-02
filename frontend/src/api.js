@@ -1,7 +1,7 @@
 import axios from 'axios';
 
 const API = axios.create({
-    baseURL: 'http://localhost:8000/api/',
+    baseURL: 'https://backend-production-bf00a.up.railway.app/api/',
 });
 
 // Automatically inject access token into headers if available
