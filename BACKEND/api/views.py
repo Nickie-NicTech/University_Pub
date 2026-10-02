@@ -367,6 +367,9 @@ class BroadcastMessageView(APIView):
         message = serializer.save(created_by=request.user)
         return Response(BroadcastMessageSerializer(message).data, status=status.HTTP_201_CREATED)
 <<<<<<< HEAD
+<<<<<<< HEAD
+=======
+>>>>>>> 7bc572f (newest changes)
 
 
 class AdminBroadcastListView(APIView):
@@ -397,5 +400,8 @@ class AdminBroadcastDetailView(APIView):
         message = get_object_or_404(BroadcastMessage, pk=pk)
         message.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
+<<<<<<< HEAD
 =======
 >>>>>>> 532f38b (add new files and initial commit)
+=======
+>>>>>>> 7bc572f (newest changes)
