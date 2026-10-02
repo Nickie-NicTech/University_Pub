@@ -65,12 +65,8 @@ MIDDLEWARE = [
 ]
 
 CORS_ALLOWED_ORIGINS = [
-    origin.strip()
-    for origin in os.environ.get(
-        'CORS_ALLOWED_ORIGINS',
-        'https://backend-production-bf00a.up.railway.app,https://frontend-production-b158.up.railway.app,http://localhost:3000,http://localhost:5173'
-    ).split(',')
-    if origin.strip()
+    "https://frontend-production-b158.up.railway.app",
+    "http://localhost:3000",  # For local development
 ]
 
 ROOT_URLCONF = 'UNIPUB.urls'
