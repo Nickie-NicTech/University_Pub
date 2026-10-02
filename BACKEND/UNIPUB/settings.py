@@ -34,8 +34,12 @@ ADMIN_PORTAL_PASSWORD = os.environ.get('UNIPUB_ADMIN_PASSWORD', 'UniPubAdmin2026
 =======
 SECRET_KEY = os.environ.get('DJANGO_SECRET_KEY', 'local-development-key-not-for-production')
 ADMIN_PORTAL_USERNAME = os.environ.get('UNIPUB_ADMIN_USERNAME', 'admin')
+<<<<<<< HEAD
 ADMIN_PORTAL_PASSWORD = os.environ.get('UNIPUB_ADMIN_PASSWORD', '')
 >>>>>>> 3936b86 (end)
+=======
+ADMIN_PORTAL_PASSWORD = os.environ.get('UNIPUB_ADMIN_PASSWORD', 'Admin@UniPub2026!')  
+>>>>>>> 3075e75 (YES)
 
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
@@ -43,12 +47,16 @@ DEBUG = True
 <<<<<<< HEAD
 <<<<<<< HEAD
 <<<<<<< HEAD
+<<<<<<< HEAD
 =======
 >>>>>>> 843c401 (Configure Railway hosts and CORS)
+=======
+>>>>>>> 3075e75 (YES)
 ALLOWED_HOSTS = [
     host.strip()
     for host in os.environ.get(
         'ALLOWED_HOSTS',
+<<<<<<< HEAD
 <<<<<<< HEAD
         'backend-production-bf00a.up.railway.app,localhost,127.0.0.1'
     ).split(',')
@@ -58,14 +66,19 @@ ALLOWED_HOSTS = [
 ALLOWED_HOSTS = []
 >>>>>>> 532f38b (add new files and initial commit)
 =======
+=======
+>>>>>>> 3075e75 (YES)
         'backend-production-bf00a.up.railway.app,localhost,127.0.0.1',
     ).split(',')
     if host.strip()
 ]
+<<<<<<< HEAD
 >>>>>>> 843c401 (Configure Railway hosts and CORS)
 =======
 ALLOWED_HOSTS = []
 >>>>>>> 4b80d89 (update cors origis)
+=======
+>>>>>>> 3075e75 (YES)
 
 
 # Application definition
@@ -98,6 +111,7 @@ CORS_ALLOWED_ORIGINS = [
 <<<<<<< HEAD
 <<<<<<< HEAD
 <<<<<<< HEAD
+<<<<<<< HEAD
     "https://frontend-production-b158.up.railway.app",
     "http://localhost:3000",  # For local development
 =======
@@ -116,8 +130,11 @@ CORS_ALLOWED_ORIGINS = [
     "http://localhost:3000",
     "http://localhost:5173",
 >>>>>>> 4b80d89 (update cors origis)
+=======
+    "https://frontend-production-b158.up.railway.app",
+    "http://localhost:3000",
+>>>>>>> 3075e75 (YES)
 ]
-
 ROOT_URLCONF = 'UNIPUB.urls'
 
 <<<<<<< HEAD
