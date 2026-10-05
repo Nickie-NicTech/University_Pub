@@ -158,7 +158,7 @@ export default function Publications({ user }) {
         <>
         <div style={{ display: 'flex', height: '100%', width: '100%', overflow: 'hidden' }}>
             {/* Left Explorer Main Timeline Pane */}
-            <div style={{ flex: 3, padding: '24px', overflowY: 'auto', height: '100%', boxSizing: 'border-box' }}>
+            <div style={{ flex: 1, padding: '24px', overflowY: 'auto', height: '100%', boxSizing: 'border-box' }}>
                 <div style={{ maxWidth: '940px', margin: '0 auto' }}>
                     
                     {/* 🌟 New Highlights Stream Banner */}
@@ -335,12 +335,7 @@ export default function Publications({ user }) {
                         </div>
                     </form>
                 </div>
-            ) : (
-                <div style={{ flex: 1.2, backgroundColor: '#f1f5f9', borderLeft: '1px solid #e2e8f0', padding: '24px', overflowY: 'auto', height: '100%', boxSizing: 'border-box' }}>   
-                    <h3 style={{ margin: '0 0 20px 0', color: '#1e293b' }}>🔒 Restricted Access</h3>
-                    <p style={{ fontSize: '0.9rem', color: '#64748b' }}>You must be a registered user with appropriate privileges to submit or modify publications. Please sign in or sign up to gain access.</p>
-                </div>
-            )}
+            ) : null}
         </div>
         {showAuthorModal && (
             <div role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setShowAuthorModal(false); }} style={modalBackdropStyle}>
