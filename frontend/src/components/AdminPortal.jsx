@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Activity, Bell, BookOpenCheck, Check, Database, LayoutDashboard, LogIn, LogOut, Pencil, Plus, Search, ShieldCheck, Trash2, Users, X } from 'lucide-react';
+import { Activity, Bell, BookOpenCheck, Check, Database, LayoutDashboard, LogOut, Pencil, Plus, Search, ShieldCheck, Trash2, Users, X } from 'lucide-react';
 import API from '../api';
 import './AdminPortal.css';
 
@@ -12,7 +12,7 @@ const sections = [
     { id: 'directory', label: 'University directory', icon: Database },
 ];
 
-export default function AdminPortal({ isAdmin, onLoginSuccess, onLogout }) {
+export default function AdminPortal({ onLogout }) {
     const [section, setSection] = useState('overview');
     const [analytics, setAnalytics] = useState(null);
     const [users, setUsers] = useState([]);
@@ -41,15 +41,13 @@ export default function AdminPortal({ isAdmin, onLoginSuccess, onLogout }) {
     };
 
     useEffect(() => {
-        if (isAdmin) void refresh();
-    }, [isAdmin]);
+        void refresh();
+    }, []);
 
     const logout = () => {
         onLogout();
         navigate('/');
     };
-
-    if (!isAdmin) return <AdminLogin onLoginSuccess={onLoginSuccess} />;
 
     return (
         <div className="admin-shell">
@@ -77,44 +75,6 @@ export default function AdminPortal({ isAdmin, onLoginSuccess, onLogout }) {
                     {section === 'directory' && <UniversityDirectory entries={directory} onRefresh={refresh} />}
                 </div>
             </main>
-        </div>
-    );
-}
-
-function AdminLogin({ onLoginSuccess }) {
-    const [username, setUsername] = useState('');
-    const [password, setPassword] = useState('');
-    const [error, setError] = useState('');
-    const [busy, setBusy] = useState(false);
-    const navigate = useNavigate();
-
-    const submit = async (event) => {
-        event.preventDefault();
-        setBusy(true);
-        setError('');
-        try {
-            const { data } = await API.post('admin/login/', { username, password });
-            localStorage.setItem('access_token', data.access);
-            localStorage.setItem('refresh_token', data.refresh);
-            onLoginSuccess(data.access);
-            navigate('/admin');
-        } catch (loginError) {
-            setError(loginError.response?.data?.detail || 'Administrator sign-in failed.');
-        } finally {
-            setBusy(false);
-        }
-    };
-
-    return (
-        <div className="admin-login-page">
-            <div className="admin-login-aside"><div className="admin-login-logo"><BookOpenCheck size={24} /> UNIPUB</div><div className="admin-login-note">REPOSITORY<br />ADMINISTRATION</div><div className="admin-login-lines" aria-hidden="true" /></div>
-            <form className="admin-login-form" onSubmit={submit}>
-                <span className="admin-breadcrumb">RESTRICTED ACCESS</span><h1>Administrator sign in</h1><p>Manage repository access, reviewer applications, and platform announcements.</p>
-                {error && <div className="admin-alert" role="alert">{error}</div>}
-                <label>Username<input autoComplete="username" value={username} onChange={(event) => setUsername(event.target.value)} required /></label>
-                <label>Password<input type="password" autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} required /></label>
-                <button className="admin-primary" disabled={busy}>{busy ? 'Signing in...' : <><LogIn size={17} /> Enter administration</>}</button>
-            </form>
         </div>
     );
 }

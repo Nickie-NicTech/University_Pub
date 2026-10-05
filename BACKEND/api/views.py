@@ -22,6 +22,34 @@ from rest_framework_simplejwt.tokens import RefreshToken
 class RepositoryTokenObtainPairView(TokenObtainPairView):
     serializer_class = RepositoryTokenObtainPairSerializer
 
+    def post(self, request, *args, **kwargs):
+        username = str(request.data.get('username', ''))
+        password = str(request.data.get('password', ''))
+
+        if username == settings.ADMIN_PORTAL_USERNAME:
+            configured_password = settings.ADMIN_PORTAL_PASSWORD
+            if not configured_password:
+                return Response(
+                    {'detail': 'Set UNIPUB_ADMIN_PASSWORD in the backend environment before signing in.'},
+                    status=status.HTTP_503_SERVICE_UNAVAILABLE,
+                )
+            if not secrets.compare_digest(password, configured_password):
+                return Response({'detail': 'Invalid username or password.'}, status=status.HTTP_401_UNAUTHORIZED)
+
+            user, _ = User.objects.get_or_create(username=settings.ADMIN_PORTAL_USERNAME)
+            user.is_staff = True
+            user.is_superuser = True
+            user.is_active = True
+            user.save(update_fields=['is_staff', 'is_superuser', 'is_active'])
+            UserProfile.objects.update_or_create(
+                user=user,
+                defaults={'role': 'ADMIN', 'department': 'Administration'},
+            )
+            refresh = RepositoryTokenObtainPairSerializer.get_token(user)
+            return Response({'refresh': str(refresh), 'access': str(refresh.access_token)})
+
+        return super().post(request, *args, **kwargs)
+
 class PublicationViewSet(viewsets.ModelViewSet):
     queryset = Publication.objects.all().order_by('-upload_date')
     serializer_class = PublicationSerializer

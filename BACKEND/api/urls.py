@@ -7,7 +7,7 @@ from .views import PublicationViewSet, AuthorViewSet, UserRegistrationView, Curr
 from .views import PublicationViewSet, AuthorViewSet, UserRegistrationView, CurrentUserProfileView, ReviewerApplicationView, AdminPortalLoginView, AdminUserListCreateView, AdminUserDetailView, AdminReviewerApplicationListView, AdminReviewerApplicationDetailView, AdminAnalyticsView, AdminUniversityDirectoryView, BroadcastMessageView
 >>>>>>> 532f38b (add new files and initial commit)
 =======
-from .views import PublicationViewSet, AuthorViewSet, UserRegistrationView, CurrentUserProfileView, ReviewerApplicationView, AdminPortalLoginView, AdminUserListCreateView, AdminUserDetailView, AdminReviewerApplicationListView, AdminReviewerApplicationDetailView, AdminAnalyticsView, AdminUniversityDirectoryView, BroadcastMessageView, AdminBroadcastListView, AdminBroadcastDetailView
+from .views import PublicationViewSet, AuthorViewSet, UserRegistrationView, CurrentUserProfileView, ReviewerApplicationView, AdminUserListCreateView, AdminUserDetailView, AdminReviewerApplicationListView, AdminReviewerApplicationDetailView, AdminAnalyticsView, AdminUniversityDirectoryView, BroadcastMessageView, AdminBroadcastListView, AdminBroadcastDetailView
 >>>>>>> 7bc572f (newest changes)
 
 router = DefaultRouter()
@@ -19,7 +19,6 @@ urlpatterns = [
     path('users/register/', UserRegistrationView.as_view(), name='user_register'),
     path('users/me/', CurrentUserProfileView.as_view(), name='current_user_profile'),
     path('users/reviewer-request/', ReviewerApplicationView.as_view(), name='reviewer_application'),
-    path('admin/login/', AdminPortalLoginView.as_view(), name='admin_portal_login'),
     path('admin/users/', AdminUserListCreateView.as_view(), name='admin_user_list'),
     path('admin/users/<int:pk>/', AdminUserDetailView.as_view(), name='admin_user_detail'),
     path('admin/reviewer-requests/', AdminReviewerApplicationListView.as_view(), name='admin_reviewer_application_list'),

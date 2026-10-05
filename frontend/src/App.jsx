@@ -63,10 +63,12 @@ export default function App() {
                 <BookOpen size={16} aria-hidden="true" />
                 Repository
               </Link>
-              <Link to="/admin" style={{ marginLeft: '18px', color: '#cbd5e1', textDecoration: 'none', fontWeight: 500, display: 'inline-flex', alignItems: 'center', gap: '7px' }}>
-                <ShieldCheck size={16} aria-hidden="true" />
-                Admin portal
-              </Link>
+              {user?.role === 'ADMIN' && (
+                <Link to="/admin" style={{ marginLeft: '18px', color: '#cbd5e1', textDecoration: 'none', fontWeight: 500, display: 'inline-flex', alignItems: 'center', gap: '7px' }}>
+                  <ShieldCheck size={16} aria-hidden="true" />
+                  Admin portal
+                </Link>
+              )}
             </nav>
           </div>
 
@@ -105,7 +107,7 @@ export default function App() {
           <main style={{ flex: 1, minWidth: 0, overflow: 'hidden', position: 'relative' }}>
             <Routes>
               <Route path="/" element={<Publications user={user} />} />
-              <Route path="/admin" element={<AdminPortal isAdmin={user?.role === 'ADMIN'} onLoginSuccess={(tok) => setToken(tok)} onLogout={handleLogout} />} />
+              <Route path="/admin" element={user?.role === 'ADMIN' ? <AdminPortal onLogout={handleLogout} /> : <Navigate to={token ? '/' : '/login'} replace />} />
               <Route path="/login" element={!token ? <Login onLoginSuccess={(tok) => setToken(tok)} /> : <Navigate to="/" />} />
               <Route path="/signup" element={!token ? <SignUp /> : <Navigate to="/" />} />
               <Route path="*" element={<Navigate to="/" />} />

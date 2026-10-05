@@ -5,6 +5,7 @@ from rest_framework.test import APITestCase
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.contrib.auth.models import User
 from django.test import override_settings
+from rest_framework_simplejwt.tokens import AccessToken
 import re
 <<<<<<< HEAD
 from .models import AuthorProfile, Publication, PublicationDeletionRequest, UserProfile, UniversityDirectoryEntry, BroadcastMessage
@@ -201,7 +202,7 @@ class PublicationTests(APITestCase):
     @override_settings(ADMIN_PORTAL_USERNAME='portal-admin', ADMIN_PORTAL_PASSWORD='fixed-test-password')
     def test_fixed_admin_login_issues_staff_token(self):
         response = self.client.post(
-            reverse('admin_portal_login'),
+            reverse('token_obtain_pair'),
             {'username': 'portal-admin', 'password': 'fixed-test-password'},
             format='json',
         )
@@ -210,6 +211,17 @@ class PublicationTests(APITestCase):
         admin = User.objects.get(username='portal-admin')
         self.assertTrue(admin.is_staff)
         self.assertEqual(UserProfile.objects.get(user=admin).role, 'ADMIN')
+        self.assertEqual(AccessToken(response.data['access'])['role'], 'ADMIN')
+
+    @override_settings(ADMIN_PORTAL_USERNAME='portal-admin', ADMIN_PORTAL_PASSWORD='fixed-test-password')
+    def test_admin_credentials_are_rejected_by_unified_login_when_invalid(self):
+        response = self.client.post(
+            reverse('token_obtain_pair'),
+            {'username': 'portal-admin', 'password': 'wrong-password'},
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
 
     def test_current_profile_returns_personal_data_and_owned_publication_stats(self):
         user = User.objects.create_user(username='profile-user', password='test-password', first_name='Ari', last_name='Researcher', email='ari@example.com')
