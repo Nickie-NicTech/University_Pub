@@ -94,7 +94,7 @@ export default function AccountSidebar({ username }) {
     const imageSrc = previewUrl || profile.profile_picture;
 
     return (
-        <aside style={{ ...sidebarStyle, width: collapsed ? '64px' : '304px' }} aria-label="Account profile">
+        <aside style={{ ...sidebarStyle, width: collapsed ? '60px' : 'min(304px, calc(100vw - 24px))' }} aria-label="Account profile">
             <div style={sidebarHeaderStyle}>
                 <button type="button" title={collapsed ? 'Expand profile sidebar' : 'Collapse profile sidebar'} aria-label={collapsed ? 'Expand profile sidebar' : 'Collapse profile sidebar'} onClick={() => setCollapsed((value) => !value)} style={iconButtonStyle}>
                     {collapsed ? <ChevronRight size={19} /> : <ChevronLeft size={19} />}
@@ -169,7 +169,7 @@ function Stat({ icon, label, value }) {
     return <div style={statStyle}><span style={{ color: '#0369a1' }}>{icon}</span><span style={statValueStyle}>{value}</span><span style={statLabelStyle}>{label}</span></div>;
 }
 
-const sidebarStyle = { flex: '0 0 auto', height: '100%', display: 'flex', flexDirection: 'column', background: '#fff', borderRight: '1px solid #dbe3ec', transition: 'width 180ms ease', overflow: 'hidden', boxSizing: 'border-box', zIndex: 4 };
+const sidebarStyle = { position: 'absolute', inset: '0 auto 0 0', height: '100%', display: 'flex', flexDirection: 'column', background: '#fff', borderRight: '1px solid #dbe3ec', boxShadow: '4px 0 18px rgba(15, 23, 42, 0.12)', transition: 'width 180ms ease', overflow: 'hidden', boxSizing: 'border-box', zIndex: 15 };
 const sidebarHeaderStyle = { minHeight: '54px', padding: '8px 10px', display: 'flex', alignItems: 'center', gap: '12px', borderBottom: '1px solid #e2e8f0', boxSizing: 'border-box' };
 const iconButtonStyle = { display: 'grid', placeItems: 'center', width: '36px', height: '36px', flex: '0 0 auto', border: '1px solid #dbe3ec', borderRadius: '5px', color: '#334155', background: '#fff', cursor: 'pointer' };
 const collapsedAvatarButtonStyle = { alignSelf: 'center', marginTop: '14px', display: 'grid', placeItems: 'center', width: '42px', height: '42px', border: '1px solid #dbe3ec', borderRadius: '50%', overflow: 'hidden', background: '#eff6ff', color: '#0369a1', cursor: 'pointer' };

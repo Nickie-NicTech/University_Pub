@@ -1,11 +1,12 @@
 import React, { useState, useEffect } from 'react';
-import { Flame, UserRoundPlus, Search, X, Check, Pencil, Trash2, ShieldCheck, BookOpenCheck } from 'lucide-react';
+import { Flame, UserRoundPlus, Search, X, Check, Pencil, Trash2, ShieldCheck, BookOpenCheck, Plus } from 'lucide-react';
 import API from '../api';
 
 export default function Publications({ user }) {
     const [publications, setPublications] = useState([]);
     const [search, setSearch] = useState('');
     const [editingId, setEditingId] = useState(null);
+    const [showSubmissionForm, setShowSubmissionForm] = useState(false);
     const [rejectingId, setRejectingId] = useState(null);
     const [rejectionReason, setRejectionReason] = useState('');
     
@@ -123,6 +124,7 @@ export default function Publications({ user }) {
                 await API.post('publications/', formData);
             }
             clearForm();
+            setShowSubmissionForm(false);
             fetchPublications();
         } catch (err) {
             const details = err.response?.data;
@@ -156,16 +158,23 @@ export default function Publications({ user }) {
 
     return (
         <>
-        <div style={{ display: 'flex', height: '100%', width: '100%', overflow: 'hidden' }}>
+        <div style={{ display: 'flex', height: '100%', width: '100%', overflow: 'hidden', position: 'relative' }}>
             {/* Left Explorer Main Timeline Pane */}
-            <div style={{ flex: 1, padding: '24px', overflowY: 'auto', height: '100%', boxSizing: 'border-box' }}>
-                <div style={{ maxWidth: '940px', margin: '0 auto' }}>
+            <div style={{ flex: 1, minWidth: 0, padding: '24px clamp(16px, 4vw, 48px)', overflowY: 'auto', height: '100%', boxSizing: 'border-box' }}>
+                <div style={{ maxWidth: '1120px', margin: '0 auto' }}>
                     
                     {/* 🌟 New Highlights Stream Banner */}
                     <div style={{ marginBottom: '28px' }}>
-                        <h4 style={{ margin: '0 0 12px 0', fontSize: '0.9rem', color: '#64748b', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '6px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                            <Flame size={16} color="#f97316"/> Latest Repository Highlights
-                        </h4>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', marginBottom: '12px' }}>
+                            <h4 style={{ margin: 0, fontSize: '0.9rem', color: '#64748b', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '6px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                                <Flame size={16} color="#f97316"/> Latest Repository Highlights
+                            </h4>
+                            {canWrite && (
+                                <button type="button" onClick={() => setShowSubmissionForm(true)} style={submissionButtonStyle}>
+                                    <Plus size={17} aria-hidden="true" /> Submit research
+                                </button>
+                            )}
+                        </div>
                         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '16px' }}>
                             {latestHighlights.map(high => (
                                 <div key={`high-${high.id}`} style={{ background: 'linear-gradient(135deg, #1e293b, #334155)', color: '#f8fafc', padding: '16px', borderRadius: '8px', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.05)' }}>
@@ -252,6 +261,7 @@ export default function Publications({ user }) {
                                                         setPubType(pub.pub_type);
                                                         setSubject(pub.subject_area);
                                                         setSelectedAuthors(pub.authors_details || []);
+                                                        setShowSubmissionForm(true);
                                                     }} style={iconButtonStyle}><Pencil size={17} aria-hidden="true" /></button>
                                                     <button title="Request publication deletion" aria-label="Request publication deletion" onClick={() => handleDeletionRequest(pub)} style={{ ...iconButtonStyle, color: '#b91c1c' }}><Trash2 size={17} aria-hidden="true" /></button>
                                                 </>
@@ -280,11 +290,17 @@ export default function Publications({ user }) {
                 </div>
             </div>
 
-            {/* Right Interactive Workbench Container: Hidden entirely from Guests */}
-            {canWrite ? (
-                <div style={{ flex: 1.2, backgroundColor: '#fff', borderLeft: '1px solid #e2e8f0', padding: '24px', overflowY: 'auto', height: '100%', boxSizing: 'border-box' }}>
-                    <h3 style={{ margin: '0 0 20px 0', color: '#1e293b' }}>{editingId ? '📝 Edit Publication' : '📤 Submit Research Output'}</h3>
-                    <form onSubmit={handleSave} style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+            {canWrite && showSubmissionForm && (
+                <div role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setShowSubmissionForm(false); }} style={submissionBackdropStyle}>
+                    <section role="dialog" aria-modal="true" aria-labelledby="submission-title" style={submissionPanelStyle}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px' }}>
+                            <div>
+                                <span style={{ color: '#64748b', fontSize: '0.72rem', fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase' }}>{editingId ? 'Update repository record' : 'Contribute to the repository'}</span>
+                                <h3 id="submission-title" style={{ margin: '4px 0 0', color: '#1e293b' }}>{editingId ? 'Edit publication' : 'Submit research output'}</h3>
+                            </div>
+                            <button type="button" title="Close form" aria-label="Close publication form" onClick={() => setShowSubmissionForm(false)} style={iconButtonStyle}><X size={18} /></button>
+                        </div>
+                        <form onSubmit={handleSave} style={{ display: 'flex', flexDirection: 'column', gap: '16px', overflowY: 'auto', padding: '2px' }}>
                         <div style={{ display: 'flex', alignItems: 'end', gap: '8px' }}>
                             <div style={{ flex: 1 }}><label style={labelStyle}>Publication Title</label><input type="text" value={title} onChange={e => setTitle(e.target.value)} required style={formInputStyle}/></div>
                             <button type="button" title="Add or select publication authors" aria-label="Add or select publication authors" onClick={() => setShowAuthorModal(true)} style={{ ...iconButtonStyle, height: '40px', minWidth: '42px', color: '#0369a1' }}>
@@ -331,12 +347,12 @@ export default function Publications({ user }) {
                         </div>
                         <div style={{ display: 'flex', gap: '12px' }}>
                             <button type="submit" style={{ padding: '10px 16px', backgroundColor: '#0284c7', color: '#fff', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: 600 }}>{editingId ? 'Update Publication' : 'Submit Publication'}</button>           
-                            {editingId && <button type="button" onClick={() => clearForm()} style={{ padding: '10px 16px', backgroundColor: '#e2e8f0', color: '#475569', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: 600 }}>Cancel Edit</button>}
+                            {editingId && <button type="button" onClick={() => { clearForm(); setShowSubmissionForm(false); }} style={{ padding: '10px 16px', backgroundColor: '#e2e8f0', color: '#475569', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: 600 }}>Cancel Edit</button>}
                         </div>
-                    </form>
+                        </form>
+                    </section>
                 </div>
-            ) : null}
-        </div>
+            )}
         {showAuthorModal && (
             <div role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setShowAuthorModal(false); }} style={modalBackdropStyle}>
                 <section role="dialog" aria-modal="true" aria-labelledby="author-modal-title" style={authorModalStyle}>
@@ -383,12 +399,16 @@ export default function Publications({ user }) {
                 </section>
             </div>
         )}
+        </div>
         </>
     );
 }
  const labelStyle = { display: 'block', marginBottom: '6px', fontSize: '0.875rem', color: '#475569', fontWeight: 600 };
 const formInputStyle = { width: '100%', padding: '10px 12px', borderRadius: '6px', border: '1px solid #cbd5e1', backgroundColor: '#f8fafc', fontSize: '0.9rem', color: '#1e293b', boxSizing: 'border-box' };
 const iconButtonStyle = { display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '4px', padding: '7px', border: '1px solid #cbd5e1', borderRadius: '5px', background: '#fff', color: '#475569', cursor: 'pointer' };
+const submissionButtonStyle = { display: 'inline-flex', flex: '0 0 auto', alignItems: 'center', gap: '7px', padding: '9px 13px', border: 0, borderRadius: '6px', background: '#0369a1', color: '#fff', fontWeight: 700, fontSize: '0.82rem', cursor: 'pointer', boxShadow: '0 2px 5px rgba(3, 105, 161, 0.2)' };
+const submissionBackdropStyle = { position: 'absolute', inset: 0, zIndex: 30, display: 'grid', placeItems: 'center', padding: '20px', boxSizing: 'border-box', background: 'rgba(15, 23, 42, 0.48)' };
+const submissionPanelStyle = { display: 'grid', gridTemplateRows: 'auto minmax(0, 1fr)', gap: '18px', width: 'min(100%, 720px)', maxHeight: '100%', padding: '24px', border: '1px solid #dbe3ec', borderRadius: '12px', background: '#fff', boxShadow: '0 24px 70px rgba(15, 23, 42, 0.3)', boxSizing: 'border-box' };
 const modalBackdropStyle = { position: 'fixed', inset: 0, zIndex: 30, background: 'rgba(15, 23, 42, 0.48)', display: 'grid', placeItems: 'center', padding: '16px' };
 const authorModalStyle = { width: 'min(100%, 560px)', maxHeight: 'min(620px, 88vh)', overflowY: 'auto', background: '#fff', borderRadius: '8px', padding: '20px', boxShadow: '0 20px 60px rgba(15, 23, 42, 0.25)', boxSizing: 'border-box' };
 const modalTabsStyle = { display: 'flex', gap: '4px', padding: '4px', marginBottom: '14px', borderRadius: '6px', background: '#f1f5f9' };
