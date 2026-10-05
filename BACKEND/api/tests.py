@@ -7,11 +7,7 @@ from django.contrib.auth.models import User
 from django.test import override_settings
 from rest_framework_simplejwt.tokens import AccessToken
 import re
-<<<<<<< HEAD
 from .models import AuthorProfile, Publication, PublicationDeletionRequest, UserProfile, UniversityDirectoryEntry, BroadcastMessage
-=======
-from .models import AuthorProfile, Publication, PublicationDeletionRequest, UserProfile, UniversityDirectoryEntry
->>>>>>> 532f38b (add new files and initial commit)
 from .serializers import RepositoryTokenObtainPairSerializer
 
 class TokenClaimsTests(TestCase):
@@ -101,7 +97,6 @@ class PublicationTests(APITestCase):
             for item in generated.data
         ))
 
-<<<<<<< HEAD
     def test_admin_can_edit_retract_restore_and_delete_broadcasts(self):
         admin = User.objects.create_superuser(username='broadcast-admin', password='test-password')
         user = User.objects.create_user(username='broadcast-reader', password='test-password')
@@ -142,8 +137,6 @@ class PublicationTests(APITestCase):
         forbidden = self.client.patch(reverse('admin_broadcast_detail', args=[announcement.id]), {'title': 'No access'}, format='json')
         self.assertEqual(forbidden.status_code, status.HTTP_403_FORBIDDEN)
 
-=======
->>>>>>> 532f38b (add new files and initial commit)
     def test_registration_rejects_ids_with_invalid_format(self):
         response = self.client.post(
             reverse('user_register'),

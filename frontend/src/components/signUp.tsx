@@ -59,15 +59,7 @@ export default function SignUp() {
                 <div style={{ marginBottom: '24px' }}>
                     <label style={labelStyle}>{role === 'STUDENT' ? 'Student ID' : 'Employee ID'}</label>
                     <input type="text" inputMode="numeric" autoComplete="off" value={universityId} onChange={(e: React.ChangeEvent<HTMLInputElement>) => setUniversityId(e.target.value.replace(/\D/g, ''))} placeholder={role === 'STUDENT' ? 'e.g., 202600001' : 'e.g., 10000001'} minLength={role === 'STUDENT' ? 9 : 8} maxLength={role === 'STUDENT' ? 9 : 8} pattern={role === 'STUDENT' ? '\\d{9}' : '[12]\\d{7}'} required style={formInputStyle}/>
-<<<<<<< HEAD
-<<<<<<< HEAD
-                    <p style={{ marginTop: '-4px', color: '#64748b', fontSize: '0.75rem' }}>Your details will be fetched from the University directory.</p>
-=======
-                    <p style={{ marginTop: '-16px', color: '#64748b', fontSize: '0.75rem' }}>Your name, email, and department will be fetched from the University directory.</p>
->>>>>>> 532f38b (add new files and initial commit)
-=======
-                    <p style={{ marginTop: '-4px', color: '#64748b', fontSize: '0.75rem' }}>Your details will be fetched from the University directory.</p>
->>>>>>> 4eb86bb (commit all)
+                    <p style={{ marginTop: '-4px', color: '#64748b', fontSize: '0.75rem' }}>Your name, email, and department will be fetched from the University directory.</p>
                 </div>
                 
                 <button type="submit" disabled={busy} style={{
