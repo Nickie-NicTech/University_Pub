@@ -216,30 +216,15 @@ class AdminPortalLoginView(APIView):
     def post(self, request):
         username = str(request.data.get('username', ''))
         password = str(request.data.get('password', ''))
-<<<<<<< HEAD
-<<<<<<< HEAD
-=======
->>>>>>> 3936b86 (end)
         configured_password = settings.ADMIN_PORTAL_PASSWORD
         if not configured_password:
             return Response(
                 {'detail': 'Set UNIPUB_ADMIN_PASSWORD in the backend environment before signing in.'},
                 status=status.HTTP_503_SERVICE_UNAVAILABLE,
             )
-<<<<<<< HEAD
         if not (
             secrets.compare_digest(username, settings.ADMIN_PORTAL_USERNAME)
             and secrets.compare_digest(password, configured_password)
-=======
-        if not (
-            secrets.compare_digest(username, settings.ADMIN_PORTAL_USERNAME)
-            and secrets.compare_digest(password, settings.ADMIN_PORTAL_PASSWORD)
->>>>>>> 532f38b (add new files and initial commit)
-=======
-        if not (
-            secrets.compare_digest(username, settings.ADMIN_PORTAL_USERNAME)
-            and secrets.compare_digest(password, configured_password)
->>>>>>> 3936b86 (end)
         ):
             return Response({'detail': 'Invalid administrator credentials.'}, status=status.HTTP_401_UNAUTHORIZED)
 
@@ -403,12 +388,6 @@ class BroadcastMessageView(APIView):
         serializer.is_valid(raise_exception=True)
         message = serializer.save(created_by=request.user)
         return Response(BroadcastMessageSerializer(message).data, status=status.HTTP_201_CREATED)
-<<<<<<< HEAD
-<<<<<<< HEAD
-=======
->>>>>>> 7bc572f (newest changes)
-
-
 class AdminBroadcastListView(APIView):
     permission_classes = [permissions.IsAdminUser]
 
@@ -437,8 +416,3 @@ class AdminBroadcastDetailView(APIView):
         message = get_object_or_404(BroadcastMessage, pk=pk)
         message.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
-<<<<<<< HEAD
-=======
->>>>>>> 532f38b (add new files and initial commit)
-=======
->>>>>>> 7bc572f (newest changes)

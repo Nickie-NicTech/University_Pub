@@ -1,14 +1,6 @@
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
-<<<<<<< HEAD
-<<<<<<< HEAD
 from .views import PublicationViewSet, AuthorViewSet, UserRegistrationView, CurrentUserProfileView, ReviewerApplicationView, AdminPortalLoginView, AdminUserListCreateView, AdminUserDetailView, AdminReviewerApplicationListView, AdminReviewerApplicationDetailView, AdminAnalyticsView, AdminUniversityDirectoryView, BroadcastMessageView, AdminBroadcastListView, AdminBroadcastDetailView
-=======
-from .views import PublicationViewSet, AuthorViewSet, UserRegistrationView, CurrentUserProfileView, ReviewerApplicationView, AdminPortalLoginView, AdminUserListCreateView, AdminUserDetailView, AdminReviewerApplicationListView, AdminReviewerApplicationDetailView, AdminAnalyticsView, AdminUniversityDirectoryView, BroadcastMessageView
->>>>>>> 532f38b (add new files and initial commit)
-=======
-from .views import PublicationViewSet, AuthorViewSet, UserRegistrationView, CurrentUserProfileView, ReviewerApplicationView, AdminUserListCreateView, AdminUserDetailView, AdminReviewerApplicationListView, AdminReviewerApplicationDetailView, AdminAnalyticsView, AdminUniversityDirectoryView, BroadcastMessageView, AdminBroadcastListView, AdminBroadcastDetailView
->>>>>>> 7bc572f (newest changes)
 
 router = DefaultRouter()
 router.register(r'publications', PublicationViewSet)
@@ -25,16 +17,8 @@ urlpatterns = [
     path('admin/reviewer-requests/<int:pk>/', AdminReviewerApplicationDetailView.as_view(), name='admin_reviewer_application_detail'),
     path('admin/analytics/', AdminAnalyticsView.as_view(), name='admin_analytics'),
     path('admin/university-directory/', AdminUniversityDirectoryView.as_view(), name='admin_university_directory'),
-<<<<<<< HEAD
-<<<<<<< HEAD
     path('admin/broadcasts/', AdminBroadcastListView.as_view(), name='admin_broadcast_list'),
     path('admin/broadcasts/<int:pk>/', AdminBroadcastDetailView.as_view(), name='admin_broadcast_detail'),
-=======
->>>>>>> 532f38b (add new files and initial commit)
-=======
-    path('admin/broadcasts/', AdminBroadcastListView.as_view(), name='admin_broadcast_list'),
-    path('admin/broadcasts/<int:pk>/', AdminBroadcastDetailView.as_view(), name='admin_broadcast_detail'),
->>>>>>> 7bc572f (newest changes)
     path('broadcasts/', BroadcastMessageView.as_view(), name='broadcast_list'),
 
 ]
