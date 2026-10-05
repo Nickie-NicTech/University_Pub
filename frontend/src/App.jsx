@@ -104,7 +104,7 @@ export default function App() {
             <Routes>
               <Route path="/" element={<Publications user={user} />} />
               <Route path="/admin" element={user?.role === 'ADMIN' ? <AdminPortal onLogout={handleLogout} /> : <Navigate to={token ? '/' : '/login'} replace />} />
-              <Route path="/login" element={!token ? <Login onLoginSuccess={(tok) => setToken(tok)} /> : <Navigate to="/" />} />
+              <Route path="/login" element={!token ? <Login onLoginSuccess={(tok) => setToken(tok)} /> : <Navigate to={user?.role === 'ADMIN' ? '/admin' : '/'} replace />} />
               <Route path="/signup" element={!token ? <SignUp /> : <Navigate to="/" />} />
               <Route path="*" element={<Navigate to="/" />} />
             </Routes>
