@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Flame, UserRoundPlus, Search, X, Check, Pencil, Trash2, ShieldCheck, Download, Plus } from 'lucide-react';
+import { Flame, UserRoundPlus, Search, X, Check, Pencil, Trash2, ShieldCheck, Download, Eye, Plus } from 'lucide-react';
 import API from '../api';
 
 export default function Publications({ user }) {
@@ -33,7 +33,7 @@ export default function Publications({ user }) {
     const [authorWorksError, setAuthorWorksError] = useState('');
 
     // Restrictions configuration boundary parameters
-    const canWrite = user && ['STUDENT', 'LECTURER', 'REVIEWER'].includes(user.role);
+    const canWrite = user && ['STUDENT', 'LECTURER'].includes(user.role);
     const latestHighlights = publications.slice(0, 3); // Grab top 3 items for the feed banner
 
     const fetchPublications = useCallback(async () => {
@@ -208,6 +208,44 @@ export default function Publications({ user }) {
         }
     };
 
+    const viewPublication = async (publication) => {
+        const viewer = window.open('', '_blank');
+        if (!viewer) {
+            alert('Please allow pop-ups to view this publication.');
+            return;
+        }
+        try {
+            const { data } = await API.get(`publications/${publication.id}/view/`, { responseType: 'blob' });
+            const viewUrl = URL.createObjectURL(data);
+            viewer.location.href = viewUrl;
+            window.setTimeout(() => URL.revokeObjectURL(viewUrl), 60000);
+        } catch (err) {
+            viewer.close();
+            console.error('Unable to view publication:', err);
+            alert(err.response?.data?.detail || 'Unable to view this publication.');
+        }
+    };
+
+    const publicationActions = (publication, dark = false) => {
+        if (!publication.file_attachment) return null;
+        const buttonStyle = {
+            ...iconButtonStyle,
+            color: dark ? '#f8fafc' : '#0369a1',
+            background: dark ? 'rgba(255, 255, 255, 0.12)' : '#fff',
+            borderColor: dark ? 'rgba(255, 255, 255, 0.35)' : '#cbd5e1',
+        };
+        return (
+            <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                <button type="button" onClick={() => viewPublication(publication)} title={`View ${publication.title}`} aria-label={`View ${publication.title}`} style={buttonStyle}>
+                    <Eye size={16} aria-hidden="true" />
+                </button>
+                <button type="button" onClick={() => downloadPublication(publication)} disabled={downloadingPublicationId === publication.id} title={`Download ${publication.title}`} aria-label={`Download ${publication.title}`} style={{ ...buttonStyle, cursor: downloadingPublicationId === publication.id ? 'wait' : 'pointer' }}>
+                    <Download size={16} aria-hidden="true" />
+                </button>
+            </div>
+        );
+    };
+
     return (
         <>
         <div style={{ display: 'flex', height: '100%', width: '100%', overflow: 'hidden', position: 'relative' }}>
@@ -230,7 +268,10 @@ export default function Publications({ user }) {
                         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '16px' }}>
                             {latestHighlights.map(high => (
                                 <div key={`high-${high.id}`} style={{ background: 'linear-gradient(135deg, #1e293b, #334155)', color: '#f8fafc', padding: '16px', borderRadius: '8px', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.05)' }}>
-                                    <span style={{ fontSize: '0.7rem', background: '#38bdf8', color: '#1e293b', fontWeight: 700, padding: '2px 6px', borderRadius: '4px', textTransform: 'uppercase' }}>{high.pub_type}</span>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px' }}>
+                                        <span style={{ fontSize: '0.7rem', background: '#38bdf8', color: '#1e293b', fontWeight: 700, padding: '2px 6px', borderRadius: '4px', textTransform: 'uppercase' }}>{high.pub_type}</span>
+                                        {publicationActions(high, true)}
+                                    </div>
                                     <h4 style={{ margin: '8px 0 4px 0', fontSize: '0.95rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{high.title}</h4>
                                     <p style={{ margin: 0, fontSize: '0.8rem', color: '#94a3b8' }}>Field: {high.subject_area}</p>
                                 </div>
@@ -278,7 +319,14 @@ export default function Publications({ user }) {
                             }}>
                                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'start', gap: '12px' }}>
                                     <h3 style={{ margin: '0 0 8px 0', color: '#1e293b', fontSize: '1.15rem' }}>{pub.title}</h3>
-                                    <span style={{ fontSize: '0.75rem', fontWeight: 600, padding: '4px 8px', borderRadius: '4px', backgroundColor: '#e2e8f0', color: '#475569' }}>{pub.pub_type}</span>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                        <span style={{ fontSize: '0.75rem', fontWeight: 600, padding: '4px 8px', borderRadius: '4px', backgroundColor: '#e2e8f0', color: '#475569' }}>{pub.pub_type}</span>
+                                        {pub.file_attachment && (
+                                            <button type="button" onClick={() => viewPublication(pub)} title={`View ${pub.title}`} aria-label={`View ${pub.title}`} style={iconButtonStyle}>
+                                                <Eye size={15} aria-hidden="true" />
+                                            </button>
+                                        )}
+                                    </div>
                                 </div>
                                 <p style={{ fontSize: '0.875rem', color: '#64748b', margin: '0 0 12px 0' }}><strong>Research Domain:</strong> {pub.subject_area}</p>
                                 {pub.authors_details?.length > 0 && (
@@ -320,7 +368,7 @@ export default function Publications({ user }) {
                                                     </button>
                                                 </>
                                             )}
-                                            {pub.is_owner && (
+                                            {pub.is_owner && !pub.is_approved && pub.review_status !== 'APPROVED' && (
                                                 <>
                                                     <button title="Edit publication" aria-label="Edit publication" onClick={() => {
                                                         setEditingId(pub.id);

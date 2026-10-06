@@ -80,9 +80,14 @@ class PublicationViewSet(viewsets.ModelViewSet):
         publication = self.get_object()
         if publication.owner_id != self.request.user.id:
             raise PermissionDenied('Only the publication owner may edit this record.')
+        if publication.is_approved or publication.review_status == 'APPROVED':
+            raise PermissionDenied('Approved publications cannot be edited.')
         serializer.save(is_approved=False, review_status='PENDING', rejection_reason='')
 
     def perform_create(self, serializer):
+        profile = getattr(self.request.user, 'profile', None)
+        if profile and profile.role == 'REVIEWER':
+            raise PermissionDenied('Reviewers cannot create publications.')
         serializer.save(owner=self.request.user)
 
     def destroy(self, request, *args, **kwargs):
@@ -98,6 +103,18 @@ class PublicationViewSet(viewsets.ModelViewSet):
             raise NotFound('This publication has no attached file.')
         Publication.objects.filter(pk=publication.pk).update(download_count=F('download_count') + 1)
         return FileResponse(publication.file_attachment.open('rb'), as_attachment=True)
+
+    @action(detail=True, methods=['get'], url_path='view')
+    def view(self, request, pk=None):
+        publication = self.get_object()
+        if not publication.file_attachment:
+            raise NotFound('This publication has no attached file.')
+        return FileResponse(
+            publication.file_attachment.open('rb'),
+            as_attachment=False,
+            filename=publication.file_attachment.name.rsplit('/', 1)[-1],
+            content_type='application/pdf',
+        )
 
     @action(detail=True, methods=['post'], url_path='approve')
     def approve(self, request, pk=None):

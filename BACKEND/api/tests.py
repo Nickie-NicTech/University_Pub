@@ -263,6 +263,55 @@ class PublicationTests(APITestCase):
 
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
 
+    def test_owner_cannot_edit_approved_publication(self):
+        owner = User.objects.create_user(username='approved-owner', password='test-password')
+        UserProfile.objects.create(user=owner, role='STUDENT', department='Computing')
+        publication = Publication.objects.create(
+            title='Approved paper', owner=owner, abstract='Original abstract',
+            pub_type='JOURNAL', subject_area='Computing', is_approved=True,
+        )
+        self.client.force_authenticate(user=owner)
+
+        response = self.client.patch(
+            reverse('publication-detail', args=[publication.id]),
+            {'title': 'Changed approved paper'},
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        publication.refresh_from_db()
+        self.assertEqual(publication.title, 'Approved paper')
+
+    def test_reviewer_cannot_create_publication(self):
+        reviewer = User.objects.create_user(username='no-upload-reviewer', password='test-password')
+        UserProfile.objects.create(user=reviewer, role='REVIEWER', department='Computing')
+        self.client.force_authenticate(user=reviewer)
+
+        response = self.client.post(
+            reverse('publication-list'),
+            {'title': 'Reviewer upload', 'abstract': 'Abstract', 'pub_type': 'JOURNAL', 'subject_area': 'Computing'},
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertFalse(Publication.objects.filter(title='Reviewer upload').exists())
+
+    def test_guest_can_view_approved_publication_inline_without_incrementing_downloads(self):
+        owner = User.objects.create_user(username='public-view-owner', password='test-password')
+        publication = Publication.objects.create(
+            title='Public view paper', owner=owner, abstract='Abstract',
+            pub_type='JOURNAL', subject_area='Computing', is_approved=True,
+            file_attachment=SimpleUploadedFile('public-view.pdf', b'%PDF-1.4 view', content_type='application/pdf'),
+        )
+
+        response = self.client.get(reverse('publication-view', args=[publication.id]))
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertIn('inline', response['Content-Disposition'])
+        self.assertEqual(b''.join(response.streaming_content), b'%PDF-1.4 view')
+        publication.refresh_from_db()
+        self.assertEqual(publication.download_count, 0)
+
     def test_pending_publications_are_visible_only_to_owner_and_reviewer(self):
         owner = User.objects.create_user(username='pending-owner', password='test-password')
         reader = User.objects.create_user(username='public-reader', password='test-password')
