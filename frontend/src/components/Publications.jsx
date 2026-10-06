@@ -1,9 +1,12 @@
-import React, { useState, useEffect } from 'react';
-import { Flame, UserRoundPlus, Search, X, Check, Pencil, Trash2, ShieldCheck, BookOpenCheck, Plus } from 'lucide-react';
+import React, { useState, useEffect, useCallback } from 'react';
+import { Flame, UserRoundPlus, Search, X, Check, Pencil, Trash2, ShieldCheck, Download, Plus } from 'lucide-react';
 import API from '../api';
 
 export default function Publications({ user }) {
     const [publications, setPublications] = useState([]);
+    const [publicationsLoading, setPublicationsLoading] = useState(true);
+    const [publicationsError, setPublicationsError] = useState('');
+    const [downloadingPublicationId, setDownloadingPublicationId] = useState(null);
     const [search, setSearch] = useState('');
     const [editingId, setEditingId] = useState(null);
     const [showSubmissionForm, setShowSubmissionForm] = useState(false);
@@ -27,18 +30,28 @@ export default function Publications({ user }) {
     const [activeAuthor, setActiveAuthor] = useState(null);
     const [authorWorks, setAuthorWorks] = useState([]);
     const [authorLoading, setAuthorLoading] = useState(false);
+    const [authorWorksError, setAuthorWorksError] = useState('');
 
     // Restrictions configuration boundary parameters
     const canWrite = user && ['STUDENT', 'LECTURER', 'REVIEWER'].includes(user.role);
     const latestHighlights = publications.slice(0, 3); // Grab top 3 items for the feed banner
 
-    const fetchPublications = async () => {
+    const fetchPublications = useCallback(async () => {
         try {
-            const res = await API.get(`publications/?search=${search}`);
-            setPublications(res.data);
+            const res = await API.get(`publications/?search=${encodeURIComponent(search)}`);
+            setPublications(Array.isArray(res.data) ? res.data : []);
         } catch (err) {
             console.error(err);
+            setPublicationsError('Unable to load publications. Please try again.');
+        } finally {
+            setPublicationsLoading(false);
         }
+    }, [search]);
+
+    const refreshPublications = async () => {
+        setPublicationsLoading(true);
+        setPublicationsError('');
+        await fetchPublications();
     };
 
     const clearForm = () => {
@@ -51,7 +64,7 @@ export default function Publications({ user }) {
         setSelectedAuthors([]);
     };
 
-    useEffect(() => { fetchPublications(); }, [search]);
+    useEffect(() => { fetchPublications(); }, [fetchPublications]);
 
     useEffect(() => {
         if (!showAuthorModal) return;
@@ -69,13 +82,31 @@ export default function Publications({ user }) {
     const showAuthorDetails = async (author) => {
         setActiveAuthor(author);
         setAuthorWorks([]);
+        setAuthorWorksError('');
         setAuthorLoading(true);
         try {
-            const { data } = await API.get(`publications/?search=${encodeURIComponent(author.name || `${author.first_name || ''} ${author.last_name || ''}`.trim())}`);
-            const works = Array.isArray(data) ? data : [];
-            setAuthorWorks(works.filter((work) => (work.authors_details || []).some((item) => item.id === author.id)));
+            const searchTerms = [...new Set(
+                [author.first_name, author.last_name]
+                    .map((name) => name?.trim())
+                    .filter(Boolean)
+            )];
+            if (searchTerms.length === 0 && author.name) {
+                searchTerms.push(...new Set(author.name.trim().split(/\s+/).filter(Boolean)));
+            }
+            const responses = await Promise.all(searchTerms.map((term) =>
+                API.get(`publications/?search=${encodeURIComponent(term)}`)
+            ));
+            const works = responses.flatMap(({ data }) => Array.isArray(data) ? data : []);
+            const authorPublications = new Map();
+            works.forEach((work) => {
+                if ((work.authors_details || []).some((item) => item.id === author.id)) {
+                    authorPublications.set(work.id, work);
+                }
+            });
+            setAuthorWorks([...authorPublications.values()]);
         } catch (err) {
             console.error('Unable to load author publications:', err);
+            setAuthorWorksError('Unable to load this author’s publications. Please try again.');
         } finally {
             setAuthorLoading(false);
         }
@@ -101,7 +132,7 @@ export default function Publications({ user }) {
         try {
             await API.post(`publications/${publication.id}/request-deletion/`, { reason });
             alert('Deletion request submitted for review.');
-            fetchPublications();
+            refreshPublications();
         } catch (err) {
             alert(err.response?.data?.detail || 'Could not submit the deletion request.');
         }
@@ -125,7 +156,7 @@ export default function Publications({ user }) {
             }
             clearForm();
             setShowSubmissionForm(false);
-            fetchPublications();
+            refreshPublications();
         } catch (err) {
             const details = err.response?.data;
             const message = details
@@ -138,7 +169,7 @@ export default function Publications({ user }) {
     const approvePublication = async (id) => {
         try {
             await API.post(`publications/${id}/approve/`);
-            fetchPublications();
+            refreshPublications();
         } catch (err) {
             alert(err.response?.data?.detail || 'Unable to approve this publication.');
         }
@@ -150,9 +181,30 @@ export default function Publications({ user }) {
             await API.post(`publications/${id}/reject/`, { reason: rejectionReason });
             setRejectingId(null);
             setRejectionReason('');
-            fetchPublications();
+            refreshPublications();
         } catch (err) {
             alert(err.response?.data?.reason?.[0] || err.response?.data?.detail || 'Unable to reject this publication.');
+        }
+    };
+
+    const downloadPublication = async (publication) => {
+        setDownloadingPublicationId(publication.id);
+        try {
+            const { data } = await API.get(`publications/${publication.id}/download/`, { responseType: 'blob' });
+            const downloadUrl = URL.createObjectURL(data);
+            const link = document.createElement('a');
+            const filename = (publication.title || 'publication').replace(/[<>:"/\\|?*]/g, '_');
+            link.href = downloadUrl;
+            link.download = `${filename}.pdf`;
+            document.body.appendChild(link);
+            link.click();
+            link.remove();
+            window.setTimeout(() => URL.revokeObjectURL(downloadUrl), 1000);
+        } catch (err) {
+            console.error('Unable to download publication:', err);
+            alert(err.response?.data?.detail || 'Unable to download this publication.');
+        } finally {
+            setDownloadingPublicationId(null);
         }
     };
 
@@ -192,7 +244,11 @@ export default function Publications({ user }) {
                             type="text" 
                             placeholder="🔍 Guest Search Gateway: Query by title, abstract description, field, or classification area..." 
                             value={search} 
-                            onChange={e => setSearch(e.target.value)} 
+                            onChange={e => {
+                                setSearch(e.target.value);
+                                setPublicationsLoading(true);
+                                setPublicationsError('');
+                            }}
                             style={{
                                 width: '100%', padding: '14px 18px', borderRadius: '8px', 
                                 border: '1px solid #cbd5e1', backgroundColor: '#fff', fontSize: '1rem',
@@ -200,9 +256,21 @@ export default function Publications({ user }) {
                             }}
                         />
                     </div>
+                    <p role="status" aria-live="polite" style={{ margin: '-12px 0 16px', color: '#64748b', fontSize: '0.85rem' }}>
+                        {publicationsLoading
+                            ? 'Loading publications…'
+                            : publicationsError
+                                ? publicationsError
+                                : `Showing ${publications.length} of ${publications.length} results${search.trim() ? ` for “${search.trim()}”` : ''}.`}
+                    </p>
 
                     {/* Timeline Loop */}
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                        {!publicationsLoading && !publicationsError && publications.length === 0 && (
+                            <p style={{ margin: 0, padding: '20px', border: '1px solid #e2e8f0', borderRadius: '8px', background: '#fff', color: '#64748b', textAlign: 'center' }}>
+                                {search.trim() ? 'No publications match your search. Try different keywords.' : 'No publications are available yet.'}
+                            </p>
+                        )}
                         {publications.map(pub => (
                             <div key={pub.id} style={{
                                 backgroundColor: '#fff', padding: '20px', borderRadius: '8px',
@@ -234,9 +302,9 @@ export default function Publications({ user }) {
                                             ● {pub.review_status === 'REJECTED' ? 'Rejected' : pub.review_status === 'APPROVED' || pub.is_approved ? 'Verified Document' : 'Pending Verification'}
                                         </span>
                                         {pub.file_attachment && (
-                                            <a href={`${API.defaults.baseURL}publications/${pub.id}/download/`} target="_blank" rel="noreferrer" style={{ fontSize: '0.875rem', color: '#0284c7', textDecoration: 'none', fontWeight: 500, display: 'inline-flex', alignItems: 'center', gap: '5px' }} title={`Download manuscript (${pub.download_count || 0} downloads)`}>
-                                                <BookOpenCheck size={15} aria-hidden="true" /> Read Manuscript PDF <span style={{ color: '#64748b' }}>({pub.download_count || 0})</span>
-                                            </a>
+                                            <button type="button" onClick={() => downloadPublication(pub)} disabled={downloadingPublicationId === pub.id} style={{ padding: 0, border: 0, background: 'none', color: '#0284c7', textDecoration: 'none', fontWeight: 500, fontSize: '0.875rem', display: 'inline-flex', alignItems: 'center', gap: '5px', cursor: downloadingPublicationId === pub.id ? 'wait' : 'pointer' }} title={`Download manuscript (${pub.download_count || 0} downloads)`}>
+                                                <Download size={15} aria-hidden="true" /> {downloadingPublicationId === pub.id ? 'Downloading…' : 'Download PDF'} <span style={{ color: '#64748b' }}>({pub.download_count || 0})</span>
+                                            </button>
                                         )}
                                     </div>
 
@@ -300,7 +368,7 @@ export default function Publications({ user }) {
                             </div>
                             <button type="button" title="Close form" aria-label="Close publication form" onClick={() => setShowSubmissionForm(false)} style={iconButtonStyle}><X size={18} /></button>
                         </div>
-                        <form onSubmit={handleSave} style={{ display: 'flex', flexDirection: 'column', gap: '16px', overflowY: 'auto', padding: '2px' }}>
+                        <form onSubmit={handleSave} style={{ display: 'flex', minHeight: 0, flexDirection: 'column', gap: '16px', overflowY: 'auto', overscrollBehavior: 'contain', padding: '2px' }}>
                         <div style={{ display: 'flex', alignItems: 'end', gap: '8px' }}>
                             <div style={{ flex: 1 }}><label style={labelStyle}>Publication Title</label><input type="text" value={title} onChange={e => setTitle(e.target.value)} required style={formInputStyle}/></div>
                             <button type="button" title="Add or select publication authors" aria-label="Add or select publication authors" onClick={() => setShowAuthorModal(true)} style={{ ...iconButtonStyle, height: '40px', minWidth: '42px', color: '#0369a1' }}>
@@ -311,27 +379,9 @@ export default function Publications({ user }) {
                         {selectedAuthors.length > 0 && <p style={{ margin: '-8px 0 0', color: '#475569', fontSize: '0.8rem' }}>Authors: {selectedAuthors.map((author) => author.name || `${author.first_name} ${author.last_name}`).join('; ')}</p>}
                         <div><label style={labelStyle}>Subject Area</label><input type="text" value={subject} onChange={e => setSubject(e.target.value)} required style={formInputStyle}/></div>
                         <div>
-
-                        {activeAuthor && (
-                            <div onClick={() => setActiveAuthor(null)} style={{ position: 'fixed', inset: 0, zIndex: 1000, background: 'rgba(15, 23, 42, 0.55)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}>
-                                <div role="dialog" aria-modal="true" aria-label="Author details" onClick={(event) => event.stopPropagation()} style={{ background: '#fff', borderRadius: '10px', padding: '24px', width: 'min(560px, 100%)', maxHeight: '80vh', overflowY: 'auto', boxShadow: '0 20px 25px rgba(0,0,0,0.2)' }}>
-                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px' }}>
-                                        <h3 style={{ margin: 0, color: '#1e293b' }}>{activeAuthor.name || `${activeAuthor.first_name || ''} ${activeAuthor.last_name || ''}`.trim()}</h3>
-                                        <button type="button" onClick={() => setActiveAuthor(null)} aria-label="Close author details" style={{ border: 0, background: 'none', cursor: 'pointer', color: '#475569' }}><X size={20}/></button>
-                                    </div>
-                                    <div style={{ margin: '16px 0', color: '#475569', lineHeight: 1.7 }}>
-                                        {['occupation', 'department', 'institution', 'physical_address'].map((field) => activeAuthor[field] && <div key={field}><strong>{field.replace('_', ' ')}:</strong> {activeAuthor[field]}</div>)}
-                                    </div>
-                                    <h4 style={{ margin: '16px 0 8px', color: '#1e293b' }}>Other publications</h4>
-                                    {authorLoading ? <p>Loading publications…</p> : authorWorks.length ? (
-                                        <ul style={{ paddingLeft: '20px', margin: 0, color: '#334155' }}>{authorWorks.map((work) => <li key={work.id} style={{ marginBottom: '8px' }}>{work.title}</li>)}</ul>
-                                    ) : <p style={{ color: '#64748b' }}>No other publications found.</p>}
-                                </div>
-                            </div>
-                        )}
                             <label style={labelStyle}>Abstract Description</label>
                             <textarea value={abstract} onChange={e => setAbstract(e.target.value)} required style={{ ...formInputStyle, height: '100px', resize: 'vertical' }}></textarea>
-                        </div>                                      
+                        </div>
                         <div>
                             <label style={labelStyle}>Publication Type</label>
                             <select value={pubType} onChange={e => setPubType(e.target.value)} required style={formInputStyle}>             
@@ -353,6 +403,25 @@ export default function Publications({ user }) {
                     </section>
                 </div>
             )}
+        {activeAuthor && (
+            <div onClick={() => setActiveAuthor(null)} style={{ position: 'fixed', inset: 0, zIndex: 1000, background: 'rgba(15, 23, 42, 0.55)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}>
+                <div role="dialog" aria-modal="true" aria-label="Author details" onClick={(event) => event.stopPropagation()} style={{ background: '#fff', borderRadius: '10px', padding: '24px', width: 'min(560px, 100%)', maxHeight: '80vh', overflowY: 'auto', boxShadow: '0 20px 25px rgba(0,0,0,0.2)' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px' }}>
+                        <h3 style={{ margin: 0, color: '#1e293b' }}>{activeAuthor.name || `${activeAuthor.first_name || ''} ${activeAuthor.last_name || ''}`.trim()}</h3>
+                        <button type="button" onClick={() => setActiveAuthor(null)} aria-label="Close author details" style={{ border: 0, background: 'none', cursor: 'pointer', color: '#475569' }}><X size={20}/></button>
+                    </div>
+                    <div style={{ margin: '16px 0', color: '#475569', lineHeight: 1.7 }}>
+                        {['occupation', 'department', 'institution', 'physical_address'].map((field) => activeAuthor[field] && <div key={field}><strong>{field.replace('_', ' ')}:</strong> {activeAuthor[field]}</div>)}
+                    </div>
+                    <h4 style={{ margin: '16px 0 8px', color: '#1e293b' }}>Other publications</h4>
+                    {authorLoading ? <p role="status">Loading publications…</p> : authorWorksError ? (
+                        <p role="alert" style={{ color: '#b91c1c' }}>{authorWorksError}</p>
+                    ) : authorWorks.length ? (
+                        <ul style={{ paddingLeft: '20px', margin: 0, color: '#334155' }}>{authorWorks.map((work) => <li key={work.id} style={{ marginBottom: '8px' }}>{work.title}</li>)}</ul>
+                    ) : <p style={{ color: '#64748b' }}>No other publications found.</p>}
+                </div>
+            </div>
+        )}
         {showAuthorModal && (
             <div role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setShowAuthorModal(false); }} style={modalBackdropStyle}>
                 <section role="dialog" aria-modal="true" aria-labelledby="author-modal-title" style={authorModalStyle}>
@@ -407,8 +476,8 @@ export default function Publications({ user }) {
 const formInputStyle = { width: '100%', padding: '10px 12px', borderRadius: '6px', border: '1px solid #cbd5e1', backgroundColor: '#f8fafc', fontSize: '0.9rem', color: '#1e293b', boxSizing: 'border-box' };
 const iconButtonStyle = { display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '4px', padding: '7px', border: '1px solid #cbd5e1', borderRadius: '5px', background: '#fff', color: '#475569', cursor: 'pointer' };
 const submissionButtonStyle = { display: 'inline-flex', flex: '0 0 auto', alignItems: 'center', gap: '7px', padding: '9px 13px', border: 0, borderRadius: '6px', background: '#0369a1', color: '#fff', fontWeight: 700, fontSize: '0.82rem', cursor: 'pointer', boxShadow: '0 2px 5px rgba(3, 105, 161, 0.2)' };
-const submissionBackdropStyle = { position: 'absolute', inset: 0, zIndex: 30, display: 'grid', placeItems: 'center', padding: '20px', boxSizing: 'border-box', background: 'rgba(15, 23, 42, 0.48)' };
-const submissionPanelStyle = { display: 'grid', gridTemplateRows: 'auto minmax(0, 1fr)', gap: '18px', width: 'min(100%, 720px)', maxHeight: '100%', padding: '24px', border: '1px solid #dbe3ec', borderRadius: '12px', background: '#fff', boxShadow: '0 24px 70px rgba(15, 23, 42, 0.3)', boxSizing: 'border-box' };
+const submissionBackdropStyle = { position: 'fixed', inset: 0, zIndex: 30, display: 'grid', placeItems: 'center', overflowY: 'auto', padding: '16px', boxSizing: 'border-box', background: 'rgba(15, 23, 42, 0.48)' };
+const submissionPanelStyle = { display: 'grid', gridTemplateRows: 'auto minmax(0, 1fr)', gap: '18px', width: 'min(100%, 720px)', maxHeight: 'calc(100dvh - 32px)', minHeight: 0, padding: 'clamp(16px, 4vw, 24px)', border: '1px solid #dbe3ec', borderRadius: '12px', background: '#fff', boxShadow: '0 24px 70px rgba(15, 23, 42, 0.3)', boxSizing: 'border-box' };
 const modalBackdropStyle = { position: 'fixed', inset: 0, zIndex: 30, background: 'rgba(15, 23, 42, 0.48)', display: 'grid', placeItems: 'center', padding: '16px' };
 const authorModalStyle = { width: 'min(100%, 560px)', maxHeight: 'min(620px, 88vh)', overflowY: 'auto', background: '#fff', borderRadius: '8px', padding: '20px', boxShadow: '0 20px 60px rgba(15, 23, 42, 0.25)', boxSizing: 'border-box' };
 const modalTabsStyle = { display: 'flex', gap: '4px', padding: '4px', marginBottom: '14px', borderRadius: '6px', background: '#f1f5f9' };

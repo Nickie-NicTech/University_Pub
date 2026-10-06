@@ -365,7 +365,10 @@ class PublicationTests(APITestCase):
         self.client.force_authenticate(user=reader)
         self.assertEqual(self.client.get(reverse('publication-download', args=[publication.id])).status_code, status.HTTP_404_NOT_FOUND)
         self.client.force_authenticate(user=owner)
-        self.assertEqual(self.client.get(reverse('publication-download', args=[publication.id])).status_code, status.HTTP_302_FOUND)
+        download = self.client.get(reverse('publication-download', args=[publication.id]))
+        self.assertEqual(download.status_code, status.HTTP_200_OK)
+        self.assertIn('attachment', download['Content-Disposition'])
+        self.assertEqual(b''.join(download.streaming_content), b'%PDF-1.4 test')
 
     def test_only_owner_can_request_publication_deletion(self):
         owner = User.objects.create_user(username='deletion-owner', password='test-password')

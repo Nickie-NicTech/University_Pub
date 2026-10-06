@@ -3,7 +3,7 @@ from django.db.models import Q, F, Sum
 from django.utils import timezone
 from django.conf import settings
 from django.utils import timezone
-from django.http import HttpResponseRedirect
+from django.http import FileResponse
 from django.shortcuts import get_object_or_404
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
@@ -97,7 +97,7 @@ class PublicationViewSet(viewsets.ModelViewSet):
         if not publication.file_attachment:
             raise NotFound('This publication has no attached file.')
         Publication.objects.filter(pk=publication.pk).update(download_count=F('download_count') + 1)
-        return HttpResponseRedirect(publication.file_attachment.url)
+        return FileResponse(publication.file_attachment.open('rb'), as_attachment=True)
 
     @action(detail=True, methods=['post'], url_path='approve')
     def approve(self, request, pk=None):
