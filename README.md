@@ -44,9 +44,9 @@ The frontend API client currently targets `http://localhost:8000/api/`.
 
 ## Supervisor review workflow
 
-Students and lecturers select an assigned lecturer supervisor during registration. Administrators can assign or change supervisors in the account directory; each supervisor can be assigned to multiple users. Publication submissions are routed to the submitter's assigned supervisor for review. Supervisors can request revisions with written feedback or approve the manuscript, and the submitter is emailed about review decisions.
+Students and lecturers choose a required lecturer supervisor and optional co-supervisor when creating each publication; supervisor assignments are not made during registration. Each selected lecturer receives an invitation and can accept or decline it. Lecturers use the **Review desk** in the application navigation to read and download submitted manuscripts, respond to invitations, approve accepted reviews, or request revisions with written feedback. Review actions are disabled after processing, and a publication is approved once every reviewer who accepted has approved it. Review requests and decisions are also sent as in-app notifications and email.
 
-After upgrading an existing database, run migrations and use the administrator account directory to assign supervisors to existing users. Legacy reviewer accounts are converted to lecturers by the migration.
+After upgrading an existing database, run migrations. Legacy reviewer accounts are converted to lecturers by the migration.
 
 ## Local data
 

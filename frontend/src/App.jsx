@@ -5,6 +5,7 @@ import { Bell, BookOpen, Library, LogIn, LogOut, ShieldCheck, UserPlus, UserRoun
 import Login from './components/Login';
 import SignUp from './components/signUp';
 import Publications from './components/Publications';
+import LecturerReviewPanel from './components/LecturerReviewPanel';
 import AccountSidebar from './components/AccountSidebar';
 import AdminPortal from './components/AdminPortal';
 import API from './api';
@@ -87,6 +88,12 @@ export default function App() {
                   Admin portal
                 </Link>
               )}
+              {user?.role === 'LECTURER' && (
+                <Link to="/lecturer/reviews" style={{ marginLeft: '18px', color: '#cbd5e1', textDecoration: 'none', fontWeight: 500, display: 'inline-flex', alignItems: 'center', gap: '7px' }}>
+                  <ShieldCheck size={16} aria-hidden="true" />
+                  Review desk
+                </Link>
+              )}
             </nav>
           </div>
 
@@ -144,6 +151,7 @@ export default function App() {
           <main style={{ flex: 1, minWidth: 0, overflow: 'hidden', position: 'relative' }}>
             <Routes>
               <Route path="/" element={<Publications user={user} />} />
+              <Route path="/lecturer/reviews" element={user?.role === 'LECTURER' ? <LecturerReviewPanel user={user} /> : <Navigate to="/" replace />} />
               <Route path="/admin" element={user?.role === 'ADMIN' ? <AdminPortal onLogout={handleLogout} /> : <Navigate to={token ? '/' : '/login'} replace />} />
               <Route path="/login" element={!token ? <Login onLoginSuccess={(tok) => setToken(tok)} /> : <Navigate to={user?.role === 'ADMIN' ? '/admin' : '/'} replace />} />
               <Route path="/signup" element={!token ? <SignUp /> : <Navigate to="/" />} />
