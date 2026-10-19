@@ -39,7 +39,7 @@ export default function SignUp() {
             </aside>
             <form className="admin-login-form admin-signup-form" onSubmit={handleSubmit}>
                 <span className="admin-breadcrumb">UNIPUB / CREATE ACCOUNT</span>
-                <h1>Create your profile</h1>
+                <h1>Create A profile</h1>
                 <p>Verify your University of Botswana student or staff identity to join the repository.</p>
                 {error && <div className="admin-alert" role="alert">{error}</div>}
                 <label>Username<input type="text" autoComplete="username" value={username} onChange={(event: React.ChangeEvent<HTMLInputElement>) => setUsername(event.target.value)} required /></label>
