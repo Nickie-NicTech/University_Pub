@@ -54,6 +54,23 @@ body {
   margin: 0;
 }
 
+.publication-spinner {
+  flex: 0 0 auto;
+  animation: publication-spin 0.8s linear infinite;
+}
+
+@keyframes publication-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .publication-spinner {
+    animation: none;
+  }
+}
+
 #root {
   width: 100%;
   margin: 0;

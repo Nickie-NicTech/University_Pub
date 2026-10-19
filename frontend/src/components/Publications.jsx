@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Flame, UserRoundPlus, Search, X, Check, Pencil, Trash2, ShieldCheck, Download, Eye, Plus } from 'lucide-react';
+import { Flame, UserRoundPlus, Search, X, Check, Pencil, Trash2, ShieldCheck, Download, Eye, Plus, LoaderCircle } from 'lucide-react';
 import API from '../api';
 
 export default function Publications({ user }) {
@@ -7,6 +7,8 @@ export default function Publications({ user }) {
     const [publicationsLoading, setPublicationsLoading] = useState(true);
     const [publicationsError, setPublicationsError] = useState('');
     const [downloadingPublicationId, setDownloadingPublicationId] = useState(null);
+    const [pendingAction, setPendingAction] = useState('');
+    const [actionFeedback, setActionFeedback] = useState(null);
     const [search, setSearch] = useState('');
     const [editingId, setEditingId] = useState(null);
     const [showSubmissionForm, setShowSubmissionForm] = useState(false);
@@ -24,6 +26,10 @@ export default function Publications({ user }) {
     const [authorMode, setAuthorMode] = useState('search');
     const [authorSearch, setAuthorSearch] = useState('');
     const [authorResults, setAuthorResults] = useState([]);
+    const [authorSearchLoading, setAuthorSearchLoading] = useState(false);
+    const [authorSearchError, setAuthorSearchError] = useState('');
+    const [authorFeedback, setAuthorFeedback] = useState(null);
+    const [authorSaving, setAuthorSaving] = useState(false);
     const [authorDraft, setAuthorDraft] = useState({
         first_name: '', last_name: '', physical_address: '', occupation: '', department: '', institution: '',
     });
@@ -31,27 +37,28 @@ export default function Publications({ user }) {
     const [authorWorks, setAuthorWorks] = useState([]);
     const [authorLoading, setAuthorLoading] = useState(false);
     const [authorWorksError, setAuthorWorksError] = useState('');
+    const [publicationSaving, setPublicationSaving] = useState(false);
 
     // Restrictions configuration boundary parameters
     const canWrite = user && ['STUDENT', 'LECTURER'].includes(user.role);
     const latestHighlights = publications.slice(0, 3); // Grab top 3 items for the feed banner
 
     const fetchPublications = useCallback(async () => {
-        try {
-            const res = await API.get(`publications/?search=${encodeURIComponent(search)}`);
-            setPublications(Array.isArray(res.data) ? res.data : []);
-        } catch (err) {
-            console.error(err);
-            setPublicationsError('Unable to load publications. Please try again.');
-        } finally {
-            setPublicationsLoading(false);
-        }
+        const res = await API.get(`publications/?search=${encodeURIComponent(search)}`);
+        return Array.isArray(res.data) ? res.data : [];
     }, [search]);
 
     const refreshPublications = async () => {
         setPublicationsLoading(true);
         setPublicationsError('');
-        await fetchPublications();
+        try {
+            setPublications(await fetchPublications());
+        } catch (err) {
+            console.error('Unable to refresh publications:', err);
+            setPublicationsError(getErrorMessage(err, 'Unable to load publications. Please try again.'));
+        } finally {
+            setPublicationsLoading(false);
+        }
     };
 
     const clearForm = () => {
@@ -64,13 +71,39 @@ export default function Publications({ user }) {
         setSelectedAuthors([]);
     };
 
-    useEffect(() => { fetchPublications(); }, [fetchPublications]);
+    useEffect(() => {
+        let isCurrentRequest = true;
+        fetchPublications()
+            .then((data) => {
+                if (isCurrentRequest) setPublications(data);
+            })
+            .catch((err) => {
+                if (!isCurrentRequest) return;
+                console.error('Unable to load publications:', err);
+                setPublicationsError(getErrorMessage(err, 'Unable to load publications. Please try again.'));
+            })
+            .finally(() => {
+                if (isCurrentRequest) setPublicationsLoading(false);
+            });
+        return () => { isCurrentRequest = false; };
+    }, [fetchPublications]);
 
     useEffect(() => {
         if (!showAuthorModal) return;
+        let isCurrentSearch = true;
         API.get(`authors/?search=${encodeURIComponent(authorSearch)}`)
-            .then(({ data }) => setAuthorResults(data))
-            .catch((err) => console.error('Unable to search authors:', err));
+            .then(({ data }) => {
+                if (isCurrentSearch) setAuthorResults(Array.isArray(data) ? data : []);
+            })
+            .catch((err) => {
+                if (!isCurrentSearch) return;
+                console.error('Unable to search authors:', err);
+                setAuthorSearchError(getErrorMessage(err, 'Unable to search authors. Please try again.'));
+            })
+            .finally(() => {
+                if (isCurrentSearch) setAuthorSearchLoading(false);
+            });
+        return () => { isCurrentSearch = false; };
     }, [showAuthorModal, authorSearch]);
 
     const toggleAuthor = (author) => {
@@ -114,32 +147,68 @@ export default function Publications({ user }) {
 
     const handleCreateAuthor = async (event) => {
         event.preventDefault();
+        setAuthorSaving(true);
+        setAuthorFeedback(null);
+        const firstName = authorDraft.first_name.trim();
+        const lastName = authorDraft.last_name.trim();
+        if (!firstName || !lastName) {
+            setAuthorFeedback({ type: 'error', message: 'Enter both a first name and a last name.' });
+            setAuthorSaving(false);
+            return;
+        }
         try {
-            const { data } = await API.post('authors/', authorDraft);
+            const { data: matchingAuthors } = await API.get(`authors/?search=${encodeURIComponent(firstName)}`);
+            const existingAuthor = (Array.isArray(matchingAuthors) ? matchingAuthors : []).find((author) =>
+                author.first_name?.trim().toLocaleLowerCase() === firstName.toLocaleLowerCase()
+                && author.last_name?.trim().toLocaleLowerCase() === lastName.toLocaleLowerCase()
+            ) || authorResults.find((author) =>
+                author.first_name?.trim().toLocaleLowerCase() === firstName.toLocaleLowerCase()
+                && author.last_name?.trim().toLocaleLowerCase() === lastName.toLocaleLowerCase()
+            );
+            if (existingAuthor) {
+                setSelectedAuthors((current) => current.some((item) => item.id === existingAuthor.id)
+                    ? current
+                    : [...current, existingAuthor]);
+                setAuthorResults((current) => current.some((item) => item.id === existingAuthor.id) ? current : [existingAuthor, ...current]);
+                setAuthorFeedback({ type: 'success', message: `${existingAuthor.name} already exists and has been selected.` });
+                setAuthorMode('search');
+                return;
+            }
+            const { data } = await API.post('authors/', { ...authorDraft, first_name: firstName, last_name: lastName });
             setSelectedAuthors((current) => current.some((item) => item.id === data.id) ? current : [...current, data]);
-            setAuthorResults((current) => [data, ...current]);
+            setAuthorResults((current) => current.some((item) => item.id === data.id) ? current : [data, ...current]);
             setAuthorDraft({ first_name: '', last_name: '', physical_address: '', occupation: '', department: '', institution: '' });
             setAuthorMode('search');
+            setAuthorFeedback({ type: 'success', message: `${data.name} was added and selected for this publication.` });
         } catch (err) {
-            const details = err.response?.data;
-            alert(details ? JSON.stringify(details) : err.message);
+            console.error('Unable to add author:', err);
+            setAuthorFeedback({ type: 'error', message: getErrorMessage(err, 'Unable to add this author. Please try again.') });
+        } finally {
+            setAuthorSaving(false);
         }
     };
 
     const handleDeletionRequest = async (publication) => {
         const reason = window.prompt(`Request deletion of "${publication.title}". Add a reason (optional):`);
         if (reason === null) return;
+        setPendingAction(`delete-${publication.id}`);
+        setActionFeedback(null);
         try {
             await API.post(`publications/${publication.id}/request-deletion/`, { reason });
-            alert('Deletion request submitted for review.');
-            refreshPublications();
+            setActionFeedback({ type: 'success', message: `Deletion request for "${publication.title}" was submitted for review.` });
+            await refreshPublications();
         } catch (err) {
-            alert(err.response?.data?.detail || 'Could not submit the deletion request.');
+            console.error('Unable to submit deletion request:', err);
+            setActionFeedback({ type: 'error', message: getErrorMessage(err, 'Could not submit the deletion request.') });
+        } finally {
+            setPendingAction('');
         }
     };
 
     const handleSave = async (e) => {
         e.preventDefault();
+        setPublicationSaving(true);
+        setActionFeedback(null);
         const formData = new FormData();
         formData.append('title', title);
         formData.append('abstract', abstract);
@@ -154,36 +223,51 @@ export default function Publications({ user }) {
             } else {
                 await API.post('publications/', formData);
             }
+            setActionFeedback({
+                type: 'success',
+                message: editingId ? 'Publication changes saved successfully.' : 'Publication submitted successfully and is pending review.',
+            });
             clearForm();
             setShowSubmissionForm(false);
-            refreshPublications();
+            await refreshPublications();
         } catch (err) {
-            const details = err.response?.data;
-            const message = details
-                ? Object.entries(details).map(([field, errors]) => `${field}: ${Array.isArray(errors) ? errors.join(', ') : errors}`).join('\n')
-                : err.message;
-            alert(`Publication upload failed:\n${message}`);
+            console.error('Unable to save publication:', err);
+            setActionFeedback({ type: 'error', message: getErrorMessage(err, 'Publication could not be saved. Please try again.') });
+        } finally {
+            setPublicationSaving(false);
         }
     };
 
     const approvePublication = async (id) => {
+        setPendingAction(`approve-${id}`);
+        setActionFeedback(null);
         try {
             await API.post(`publications/${id}/approve/`);
-            refreshPublications();
+            setActionFeedback({ type: 'success', message: 'Publication approved successfully.' });
+            await refreshPublications();
         } catch (err) {
-            alert(err.response?.data?.detail || 'Unable to approve this publication.');
+            console.error('Unable to approve publication:', err);
+            setActionFeedback({ type: 'error', message: getErrorMessage(err, 'Unable to approve this publication.') });
+        } finally {
+            setPendingAction('');
         }
     };
 
     const rejectPublication = async (event, id) => {
         event.preventDefault();
+        setPendingAction(`reject-${id}`);
+        setActionFeedback(null);
         try {
             await API.post(`publications/${id}/reject/`, { reason: rejectionReason });
             setRejectingId(null);
             setRejectionReason('');
-            refreshPublications();
+            setActionFeedback({ type: 'success', message: 'Publication rejected. The owner can now see your feedback.' });
+            await refreshPublications();
         } catch (err) {
-            alert(err.response?.data?.reason?.[0] || err.response?.data?.detail || 'Unable to reject this publication.');
+            console.error('Unable to reject publication:', err);
+            setActionFeedback({ type: 'error', message: getErrorMessage(err, 'Unable to reject this publication.') });
+        } finally {
+            setPendingAction('');
         }
     };
 
@@ -200,9 +284,10 @@ export default function Publications({ user }) {
             link.click();
             link.remove();
             window.setTimeout(() => URL.revokeObjectURL(downloadUrl), 1000);
+            setActionFeedback({ type: 'success', message: `Download started for "${publication.title}".` });
         } catch (err) {
             console.error('Unable to download publication:', err);
-            alert(err.response?.data?.detail || 'Unable to download this publication.');
+            setActionFeedback({ type: 'error', message: getErrorMessage(err, 'Unable to download this publication.') });
         } finally {
             setDownloadingPublicationId(null);
         }
@@ -211,7 +296,7 @@ export default function Publications({ user }) {
     const viewPublication = async (publication) => {
         const viewer = window.open('', '_blank');
         if (!viewer) {
-            alert('Please allow pop-ups to view this publication.');
+            setActionFeedback({ type: 'error', message: 'Please allow pop-ups to view this publication.' });
             return;
         }
         try {
@@ -219,10 +304,11 @@ export default function Publications({ user }) {
             const viewUrl = URL.createObjectURL(data);
             viewer.location.href = viewUrl;
             window.setTimeout(() => URL.revokeObjectURL(viewUrl), 60000);
+            setActionFeedback({ type: 'success', message: `Opened "${publication.title}" in a new tab.` });
         } catch (err) {
             viewer.close();
             console.error('Unable to view publication:', err);
-            alert(err.response?.data?.detail || 'Unable to view this publication.');
+            setActionFeedback({ type: 'error', message: getErrorMessage(err, 'Unable to view this publication.') });
         }
     };
 
@@ -240,7 +326,7 @@ export default function Publications({ user }) {
                     <Eye size={16} aria-hidden="true" />
                 </button>
                 <button type="button" onClick={() => downloadPublication(publication)} disabled={downloadingPublicationId === publication.id} title={`Download ${publication.title}`} aria-label={`Download ${publication.title}`} style={{ ...buttonStyle, cursor: downloadingPublicationId === publication.id ? 'wait' : 'pointer' }}>
-                    <Download size={16} aria-hidden="true" />
+                    {downloadingPublicationId === publication.id ? <LoaderCircle size={16} className="publication-spinner" aria-hidden="true" /> : <Download size={16} aria-hidden="true" />}
                 </button>
             </div>
         );
@@ -299,11 +385,16 @@ export default function Publications({ user }) {
                     </div>
                     <p role="status" aria-live="polite" style={{ margin: '-12px 0 16px', color: '#64748b', fontSize: '0.85rem' }}>
                         {publicationsLoading
-                            ? 'Loading publications…'
+                            ? <span style={{ display: 'inline-flex', alignItems: 'center', gap: '7px' }}><LoaderCircle size={15} className="publication-spinner" aria-hidden="true" /> Loading publications…</span>
                             : publicationsError
                                 ? publicationsError
                                 : `Showing ${publications.length} of ${publications.length} results${search.trim() ? ` for “${search.trim()}”` : ''}.`}
                     </p>
+                    {actionFeedback && (
+                        <p role={actionFeedback.type === 'error' ? 'alert' : 'status'} style={feedbackStyle(actionFeedback.type)}>
+                            {actionFeedback.message}
+                        </p>
+                    )}
 
                     {/* Timeline Loop */}
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
@@ -351,7 +442,7 @@ export default function Publications({ user }) {
                                         </span>
                                         {pub.file_attachment && (
                                             <button type="button" onClick={() => downloadPublication(pub)} disabled={downloadingPublicationId === pub.id} style={{ padding: 0, border: 0, background: 'none', color: '#0284c7', textDecoration: 'none', fontWeight: 500, fontSize: '0.875rem', display: 'inline-flex', alignItems: 'center', gap: '5px', cursor: downloadingPublicationId === pub.id ? 'wait' : 'pointer' }} title={`Download manuscript (${pub.download_count || 0} downloads)`}>
-                                                <Download size={15} aria-hidden="true" /> {downloadingPublicationId === pub.id ? 'Downloading…' : 'Download PDF'} <span style={{ color: '#64748b' }}>({pub.download_count || 0})</span>
+                                                {downloadingPublicationId === pub.id ? <LoaderCircle size={15} className="publication-spinner" aria-hidden="true" /> : <Download size={15} aria-hidden="true" />} {downloadingPublicationId === pub.id ? 'Downloading…' : 'Download PDF'} <span style={{ color: '#64748b' }}>({pub.download_count || 0})</span>
                                             </button>
                                         )}
                                     </div>
@@ -360,10 +451,10 @@ export default function Publications({ user }) {
                                         <div style={{ display: 'flex', gap: '8px' }}>
                                             {user?.role === 'REVIEWER' && pub.review_status === 'PENDING' && !pub.is_owner && (
                                                 <>
-                                                    <button title="Approve publication" aria-label="Approve publication" onClick={() => approvePublication(pub.id)} style={iconButtonStyle}>
-                                                        <ShieldCheck size={17} aria-hidden="true" />
+                                                    <button type="button" title="Approve publication" aria-label="Approve publication" disabled={pendingAction === `approve-${pub.id}`} onClick={() => approvePublication(pub.id)} style={{ ...iconButtonStyle, cursor: pendingAction === `approve-${pub.id}` ? 'wait' : 'pointer' }}>
+                                                        {pendingAction === `approve-${pub.id}` ? <LoaderCircle size={17} className="publication-spinner" aria-hidden="true" /> : <ShieldCheck size={17} aria-hidden="true" />}
                                                     </button>
-                                                    <button type="button" title="Reject publication" onClick={() => { setRejectingId(pub.id); setRejectionReason(''); }} style={{ ...iconButtonStyle, color: '#b91c1c' }}>
+                                                    <button type="button" title="Reject publication" onClick={() => { setRejectingId(pub.id); setRejectionReason(''); setActionFeedback(null); }} style={{ ...iconButtonStyle, color: '#b91c1c' }}>
                                                         <X size={17} aria-hidden="true" /><span style={{ fontSize: '0.75rem' }}>Reject</span>
                                                     </button>
                                                 </>
@@ -379,7 +470,7 @@ export default function Publications({ user }) {
                                                         setSelectedAuthors(pub.authors_details || []);
                                                         setShowSubmissionForm(true);
                                                     }} style={iconButtonStyle}><Pencil size={17} aria-hidden="true" /></button>
-                                                    <button title="Request publication deletion" aria-label="Request publication deletion" onClick={() => handleDeletionRequest(pub)} style={{ ...iconButtonStyle, color: '#b91c1c' }}><Trash2 size={17} aria-hidden="true" /></button>
+                                                    <button type="button" title="Request publication deletion" aria-label="Request publication deletion" disabled={pendingAction === `delete-${pub.id}`} onClick={() => handleDeletionRequest(pub)} style={{ ...iconButtonStyle, color: '#b91c1c', cursor: pendingAction === `delete-${pub.id}` ? 'wait' : 'pointer' }}>{pendingAction === `delete-${pub.id}` ? <LoaderCircle size={17} className="publication-spinner" aria-hidden="true" /> : <Trash2 size={17} aria-hidden="true" />}</button>
                                                 </>
                                             )}
                                         </div>
@@ -392,11 +483,11 @@ export default function Publications({ user }) {
                                 )}
                                 {rejectingId === pub.id && (
                                     <form onSubmit={(event) => rejectPublication(event, pub.id)} style={{ display: 'grid', gap: '8px', marginTop: '12px', padding: '12px', border: '1px solid #fecaca', borderRadius: '5px', background: '#fffafa' }}>
-                                        <label htmlFor={`rejection-reason-${pub.id}`} style={{ color: '#7f1d1d', fontSize: '0.82rem', fontWeight: 700 }}>Reason for rejection</label>
+                                        <label htmlFor={`rejection-reason-${pub.id}`} style={{ color: '#7f1d1d', fontSize: '0.82rem', fontWeight: 700 }}>Reason for rejection (required)</label>
                                         <textarea id={`rejection-reason-${pub.id}`} value={rejectionReason} onChange={(event) => setRejectionReason(event.target.value)} minLength={5} required rows={3} placeholder="Explain what needs to change before this can be published." style={{ width: '100%', padding: '9px', boxSizing: 'border-box', border: '1px solid #fca5a5', borderRadius: '4px', font: 'inherit', resize: 'vertical' }} />
                                         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
                                             <button type="button" onClick={() => setRejectingId(null)} style={{ ...iconButtonStyle, width: 'auto', padding: '0 10px' }}>Cancel</button>
-                                            <button type="submit" disabled={rejectionReason.trim().length < 5} style={{ ...iconButtonStyle, width: 'auto', padding: '0 10px', color: '#fff', background: '#b91c1c', borderColor: '#b91c1c' }}>Reject publication</button>
+                                            <button type="submit" disabled={rejectionReason.trim().length < 5 || pendingAction === `reject-${pub.id}`} style={{ ...iconButtonStyle, width: 'auto', padding: '0 10px', color: '#fff', background: '#b91c1c', borderColor: '#b91c1c' }}>{pendingAction === `reject-${pub.id}` && <LoaderCircle size={15} className="publication-spinner" aria-hidden="true" />}{pendingAction === `reject-${pub.id}` ? 'Rejecting…' : 'Reject publication'}</button>
                                         </div>
                                     </form>
                                 )}
@@ -418,21 +509,21 @@ export default function Publications({ user }) {
                         </div>
                         <form onSubmit={handleSave} style={{ display: 'flex', minHeight: 0, flexDirection: 'column', gap: '16px', overflowY: 'auto', overscrollBehavior: 'contain', padding: '2px' }}>
                         <div style={{ display: 'flex', alignItems: 'end', gap: '8px' }}>
-                            <div style={{ flex: 1 }}><label style={labelStyle}>Publication Title</label><input type="text" value={title} onChange={e => setTitle(e.target.value)} required style={formInputStyle}/></div>
-                            <button type="button" title="Add or select publication authors" aria-label="Add or select publication authors" onClick={() => setShowAuthorModal(true)} style={{ ...iconButtonStyle, height: '40px', minWidth: '42px', color: '#0369a1' }}>
+                            <div style={{ flex: 1 }}><label htmlFor="publication-title" style={labelStyle}>Publication Title (required)</label><input id="publication-title" type="text" value={title} onChange={e => setTitle(e.target.value)} required style={formInputStyle}/></div>
+                            <button type="button" title="Add or select publication authors" aria-label="Add or select publication authors" onClick={() => { setAuthorSearchLoading(true); setAuthorSearchError(''); setAuthorFeedback(null); setShowAuthorModal(true); }} style={{ ...iconButtonStyle, height: '40px', minWidth: '42px', color: '#0369a1' }}>
                                 <UserRoundPlus size={18} aria-hidden="true" />
                                 <span style={{ fontSize: '0.75rem' }}>{selectedAuthors.length || ''}</span>
                             </button>
                         </div>
                         {selectedAuthors.length > 0 && <p style={{ margin: '-8px 0 0', color: '#475569', fontSize: '0.8rem' }}>Authors: {selectedAuthors.map((author) => author.name || `${author.first_name} ${author.last_name}`).join('; ')}</p>}
-                        <div><label style={labelStyle}>Subject Area</label><input type="text" value={subject} onChange={e => setSubject(e.target.value)} required style={formInputStyle}/></div>
+                        <div><label htmlFor="publication-subject" style={labelStyle}>Subject Area (required)</label><input id="publication-subject" type="text" value={subject} onChange={e => setSubject(e.target.value)} required style={formInputStyle}/></div>
                         <div>
-                            <label style={labelStyle}>Abstract Description</label>
-                            <textarea value={abstract} onChange={e => setAbstract(e.target.value)} required style={{ ...formInputStyle, height: '100px', resize: 'vertical' }}></textarea>
+                            <label htmlFor="publication-abstract" style={labelStyle}>Abstract Description (required)</label>
+                            <textarea id="publication-abstract" value={abstract} onChange={e => setAbstract(e.target.value)} required style={{ ...formInputStyle, height: '100px', resize: 'vertical' }}></textarea>
                         </div>
                         <div>
-                            <label style={labelStyle}>Publication Type</label>
-                            <select value={pubType} onChange={e => setPubType(e.target.value)} required style={formInputStyle}>             
+                            <label htmlFor="publication-type" style={labelStyle}>Publication Type (required)</label>
+                            <select id="publication-type" value={pubType} onChange={e => setPubType(e.target.value)} required style={formInputStyle}>
                                 <option value="JOURNAL">Journal Article</option>
                                 <option value="CONFERENCE">Conference Paper</option>
                                 <option value="THESIS">Thesis</option>
@@ -440,11 +531,11 @@ export default function Publications({ user }) {
                             </select>
                         </div>                                              
                         <div>
-                            <label style={labelStyle}>File Attachment (PDF)</label>
-                            <input type="file" accept=".pdf" onChange={e => setFile(e.target.files[0])} style={formInputStyle}/>    
+                            <label htmlFor="publication-file" style={labelStyle}>File Attachment (PDF, optional)</label>
+                            <input id="publication-file" type="file" accept=".pdf" onChange={e => setFile(e.target.files[0])} style={formInputStyle}/>
                         </div>
                         <div style={{ display: 'flex', gap: '12px' }}>
-                            <button type="submit" style={{ padding: '10px 16px', backgroundColor: '#0284c7', color: '#fff', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: 600 }}>{editingId ? 'Update Publication' : 'Submit Publication'}</button>           
+                            <button type="submit" disabled={publicationSaving} style={{ padding: '10px 16px', backgroundColor: '#0284c7', color: '#fff', border: 'none', borderRadius: '6px', cursor: publicationSaving ? 'wait' : 'pointer', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: '7px' }}>{publicationSaving && <LoaderCircle size={16} className="publication-spinner" aria-hidden="true" />}{publicationSaving ? 'Saving…' : editingId ? 'Update Publication' : 'Submit Publication'}</button>
                             {editingId && <button type="button" onClick={() => { clearForm(); setShowSubmissionForm(false); }} style={{ padding: '10px 16px', backgroundColor: '#e2e8f0', color: '#475569', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: 600 }}>Cancel Edit</button>}
                         </div>
                         </form>
@@ -462,7 +553,7 @@ export default function Publications({ user }) {
                         {['occupation', 'department', 'institution', 'physical_address'].map((field) => activeAuthor[field] && <div key={field}><strong>{field.replace('_', ' ')}:</strong> {activeAuthor[field]}</div>)}
                     </div>
                     <h4 style={{ margin: '16px 0 8px', color: '#1e293b' }}>Other publications</h4>
-                    {authorLoading ? <p role="status">Loading publications…</p> : authorWorksError ? (
+                    {authorLoading ? <p role="status" style={{ display: 'inline-flex', alignItems: 'center', gap: '7px' }}><LoaderCircle size={15} className="publication-spinner" aria-hidden="true" /> Loading publications…</p> : authorWorksError ? (
                         <p role="alert" style={{ color: '#b91c1c' }}>{authorWorksError}</p>
                     ) : authorWorks.length ? (
                         <ul style={{ paddingLeft: '20px', margin: 0, color: '#334155' }}>{authorWorks.map((work) => <li key={work.id} style={{ marginBottom: '8px' }}>{work.title}</li>)}</ul>
@@ -484,29 +575,38 @@ export default function Publications({ user }) {
                         <button type="button" role="tab" aria-selected={authorMode === 'search'} onClick={() => setAuthorMode('search')} style={modalTabStyle(authorMode === 'search')}><Search size={15} /> Search authors</button>
                         <button type="button" role="tab" aria-selected={authorMode === 'new'} onClick={() => setAuthorMode('new')} style={modalTabStyle(authorMode === 'new')}><UserRoundPlus size={15} /> Add author</button>
                     </div>
+                    {authorFeedback && (
+                        <p role={authorFeedback.type === 'error' ? 'alert' : 'status'} style={feedbackStyle(authorFeedback.type)}>
+                            {authorFeedback.message}
+                        </p>
+                    )}
                     {authorMode === 'search' ? (
                         <div>
-                            <input type="search" value={authorSearch} onChange={(event) => setAuthorSearch(event.target.value)} placeholder="Name, occupation, address or institution" aria-label="Search existing authors" style={formInputStyle} />
+                            <input type="search" value={authorSearch} onChange={(event) => { setAuthorSearchLoading(true); setAuthorSearchError(''); setAuthorSearch(event.target.value); }} placeholder="Name, occupation, address or institution" aria-label="Search existing authors" style={formInputStyle} />
                             <div style={authorListStyle}>
-                                {authorResults.map((author) => {
+                                {authorSearchLoading ? (
+                                    <p role="status" style={{ color: '#64748b', fontSize: '0.85rem', textAlign: 'center', padding: '12px' }}><LoaderCircle size={15} className="publication-spinner" aria-hidden="true" /> Searching authors…</p>
+                                ) : authorSearchError ? (
+                                    <p role="alert" style={{ color: '#b91c1c', fontSize: '0.85rem', textAlign: 'center', padding: '12px' }}>{authorSearchError}</p>
+                                ) : authorResults.map((author) => {
                                     const isSelected = selectedAuthors.some((item) => item.id === author.id);
                                     return <button key={author.id} type="button" onClick={() => toggleAuthor(author)} style={{ ...authorResultStyle, borderColor: isSelected ? '#0284c7' : '#e2e8f0', background: isSelected ? '#f0f9ff' : '#fff' }}>
                                         <span style={{ minWidth: 0 }}><strong style={{ display: 'block', color: '#1e293b' }}>{author.name}</strong><span style={{ display: 'block', color: '#64748b', fontSize: '0.78rem' }}>{[author.occupation, author.department, author.institution].filter(Boolean).join(' · ')}</span><span style={{ display: 'block', color: '#94a3b8', fontSize: '0.75rem' }}>{author.physical_address}</span></span>
                                         {isSelected && <Check size={17} color="#0284c7" aria-label="Selected" />}
                                     </button>;
                                 })}
-                                {authorResults.length === 0 && <p style={{ color: '#64748b', fontSize: '0.85rem', textAlign: 'center', padding: '12px' }}>No matching authors.</p>}
+                                {!authorSearchLoading && !authorSearchError && authorResults.length === 0 && <p style={{ color: '#64748b', fontSize: '0.85rem', textAlign: 'center', padding: '12px' }}>No matching authors.</p>}
                             </div>
                         </div>
                     ) : (
                         <form onSubmit={handleCreateAuthor} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
-                            <div><label style={labelStyle}>First name</label><input required value={authorDraft.first_name} onChange={(event) => setAuthorDraft({ ...authorDraft, first_name: event.target.value })} style={formInputStyle} /></div>
-                            <div><label style={labelStyle}>Last name</label><input required value={authorDraft.last_name} onChange={(event) => setAuthorDraft({ ...authorDraft, last_name: event.target.value })} style={formInputStyle} /></div>
-                            <div><label style={labelStyle}>Occupation</label><input value={authorDraft.occupation} onChange={(event) => setAuthorDraft({ ...authorDraft, occupation: event.target.value })} style={formInputStyle} /></div>
-                            <div><label style={labelStyle}>Department</label><input value={authorDraft.department} onChange={(event) => setAuthorDraft({ ...authorDraft, department: event.target.value })} style={formInputStyle} /></div>
-                            <div style={{ gridColumn: '1 / -1' }}><label style={labelStyle}>Physical address</label><input value={authorDraft.physical_address} onChange={(event) => setAuthorDraft({ ...authorDraft, physical_address: event.target.value })} style={formInputStyle} /></div>
-                            <div style={{ gridColumn: '1 / -1' }}><label style={labelStyle}>Institution</label><input value={authorDraft.institution} onChange={(event) => setAuthorDraft({ ...authorDraft, institution: event.target.value })} style={formInputStyle} /></div>
-                            <button type="submit" style={{ gridColumn: '1 / -1', justifySelf: 'end', padding: '8px 14px', border: 0, borderRadius: '5px', background: '#0369a1', color: '#fff', fontWeight: 600, cursor: 'pointer' }}>Add to publication</button>
+                            <div><label htmlFor="author-first-name" style={labelStyle}>First name (required)</label><input id="author-first-name" required value={authorDraft.first_name} onChange={(event) => setAuthorDraft({ ...authorDraft, first_name: event.target.value })} style={formInputStyle} /></div>
+                            <div><label htmlFor="author-last-name" style={labelStyle}>Last name (required)</label><input id="author-last-name" required value={authorDraft.last_name} onChange={(event) => setAuthorDraft({ ...authorDraft, last_name: event.target.value })} style={formInputStyle} /></div>
+                            <div><label htmlFor="author-occupation" style={labelStyle}>Occupation (optional)</label><input id="author-occupation" value={authorDraft.occupation} onChange={(event) => setAuthorDraft({ ...authorDraft, occupation: event.target.value })} style={formInputStyle} /></div>
+                            <div><label htmlFor="author-department" style={labelStyle}>Department (optional)</label><input id="author-department" value={authorDraft.department} onChange={(event) => setAuthorDraft({ ...authorDraft, department: event.target.value })} style={formInputStyle} /></div>
+                            <div style={{ gridColumn: '1 / -1' }}><label htmlFor="author-address" style={labelStyle}>Physical address (optional)</label><input id="author-address" value={authorDraft.physical_address} onChange={(event) => setAuthorDraft({ ...authorDraft, physical_address: event.target.value })} style={formInputStyle} /></div>
+                            <div style={{ gridColumn: '1 / -1' }}><label htmlFor="author-institution" style={labelStyle}>Institution (optional)</label><input id="author-institution" value={authorDraft.institution} onChange={(event) => setAuthorDraft({ ...authorDraft, institution: event.target.value })} style={formInputStyle} /></div>
+                            <button type="submit" disabled={authorSaving} style={{ gridColumn: '1 / -1', justifySelf: 'end', padding: '8px 14px', border: 0, borderRadius: '5px', background: '#0369a1', color: '#fff', fontWeight: 600, cursor: authorSaving ? 'wait' : 'pointer', display: 'inline-flex', alignItems: 'center', gap: '7px' }}>{authorSaving && <LoaderCircle size={15} className="publication-spinner" aria-hidden="true" />}{authorSaving ? 'Adding author…' : 'Add to publication'}</button>
                         </form>
                     )}
                     <footer style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: '14px', paddingTop: '12px', borderTop: '1px solid #e2e8f0' }}>
@@ -521,7 +621,33 @@ export default function Publications({ user }) {
     );
 }
  const labelStyle = { display: 'block', marginBottom: '6px', fontSize: '0.875rem', color: '#475569', fontWeight: 600 };
-const formInputStyle = { width: '100%', padding: '10px 12px', borderRadius: '6px', border: '1px solid #cbd5e1', backgroundColor: '#f8fafc', fontSize: '0.9rem', color: '#1e293b', boxSizing: 'border-box' };
+ const feedbackStyle = (type) => ({
+     margin: '0 0 14px',
+     padding: '10px 12px',
+     border: `1px solid ${type === 'error' ? '#fecaca' : '#bbf7d0'}`,
+     borderRadius: '6px',
+     background: type === 'error' ? '#fef2f2' : '#f0fdf4',
+     color: type === 'error' ? '#991b1b' : '#166534',
+     fontSize: '0.875rem',
+ });
+ const getErrorMessage = (error, fallback) => {
+     const data = error?.response?.data;
+     if (typeof data === 'string' && data.trim()) return data;
+     if (data && typeof data === 'object' && !(data instanceof Blob)) {
+         const formatValue = (value) => Array.isArray(value)
+             ? value.map(formatValue).join(', ')
+             : value && typeof value === 'object'
+                 ? Object.entries(value).map(([key, nested]) => `${key}: ${formatValue(nested)}`).join('; ')
+                 : String(value);
+         const message = Object.entries(data)
+             .map(([field, value]) => field === 'detail' ? formatValue(value) : `${field}: ${formatValue(value)}`)
+             .filter(Boolean)
+             .join('\n');
+         if (message) return message;
+     }
+     return error?.message || fallback;
+ };
+ const formInputStyle = { width: '100%', padding: '10px 12px', borderRadius: '6px', border: '1px solid #cbd5e1', backgroundColor: '#f8fafc', fontSize: '0.9rem', color: '#1e293b', boxSizing: 'border-box' };
 const iconButtonStyle = { display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '4px', padding: '7px', border: '1px solid #cbd5e1', borderRadius: '5px', background: '#fff', color: '#475569', cursor: 'pointer' };
 const submissionButtonStyle = { display: 'inline-flex', flex: '0 0 auto', alignItems: 'center', gap: '7px', padding: '9px 13px', border: 0, borderRadius: '6px', background: '#0369a1', color: '#fff', fontWeight: 700, fontSize: '0.82rem', cursor: 'pointer', boxShadow: '0 2px 5px rgba(3, 105, 161, 0.2)' };
 const submissionBackdropStyle = { position: 'fixed', inset: 0, zIndex: 30, display: 'grid', placeItems: 'center', overflowY: 'auto', padding: '16px', boxSizing: 'border-box', background: 'rgba(15, 23, 42, 0.48)' };
