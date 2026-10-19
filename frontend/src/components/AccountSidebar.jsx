@@ -24,20 +24,12 @@ export default function AccountSidebar({ username }) {
     const [loading, setLoading] = useState(true);
     const [saving, setSaving] = useState(false);
     const [message, setMessage] = useState('');
-    const [reviewerRequest, setReviewerRequest] = useState(null);
-    const [expertise, setExpertise] = useState('');
-    const [reviewReason, setReviewReason] = useState('');
-    const [requestMessage, setRequestMessage] = useState('');
-    const [requesting, setRequesting] = useState(false);
 
     useEffect(() => {
         API.get('users/me/')
             .then(({ data }) => setProfile({ ...emptyProfile, ...data }))
             .catch((error) => setMessage(error.response?.data?.detail || 'Unable to load profile.'))
             .finally(() => setLoading(false));
-        API.get('users/reviewer-request/')
-            .then(({ data }) => setReviewerRequest(data))
-            .catch(() => {});
     }, []);
 
     useEffect(() => {
@@ -71,23 +63,6 @@ export default function AccountSidebar({ username }) {
             setMessage(details ? Object.values(details).flat().join(' ') : 'Unable to save profile.');
         } finally {
             setSaving(false);
-        }
-    };
-
-    const submitReviewerRequest = async (event) => {
-        event.preventDefault();
-        setRequesting(true);
-        setRequestMessage('');
-        try {
-            const { data } = await API.post('users/reviewer-request/', { expertise, reason: reviewReason });
-            setReviewerRequest(data);
-            setRequestMessage('Reviewer request submitted.');
-            setExpertise('');
-            setReviewReason('');
-        } catch (error) {
-            setRequestMessage(error.response?.data?.detail || 'Unable to submit reviewer request.');
-        } finally {
-            setRequesting(false);
         }
     };
 
@@ -139,23 +114,6 @@ export default function AccountSidebar({ username }) {
                                 <Stat icon={<Download size={16} />} label="Downloads" value={profile.total_downloads} />
                                 <Stat icon={<X size={16} />} label="Delete requests" value={profile.pending_deletion_requests} />
                             </div>
-                            {['STUDENT', 'LECTURER'].includes(profile.role) && (
-                                <section aria-label="Reviewer application">
-                                    <div style={sectionHeadingStyle}>Reviewer access</div>
-                                    {reviewerRequest?.status === 'PENDING' ? (
-                                        <p style={reviewRequestStatusStyle}>Request pending review</p>
-                                    ) : reviewerRequest?.status === 'APPROVED' ? (
-                                        <p style={reviewRequestStatusStyle}>Request approved</p>
-                                    ) : (
-                                        <form onSubmit={submitReviewerRequest}>
-                                            <label style={labelStyle}>Subject expertise<input required maxLength={200} value={expertise} onChange={(event) => setExpertise(event.target.value)} style={inputStyle} placeholder="e.g. Computer Science" /></label>
-                                            <label style={labelStyle}>Why would you like to review?<textarea required rows={3} value={reviewReason} onChange={(event) => setReviewReason(event.target.value)} style={{ ...inputStyle, resize: 'vertical' }} /></label>
-                                            <button type="submit" disabled={requesting} style={saveButtonStyle}>{requesting ? 'Submitting...' : 'Request reviewer access'}</button>
-                                        </form>
-                                    )}
-                                    {requestMessage && <p role="status" style={messageStyle}>{requestMessage}</p>}
-                                </section>
-                            )}
                             {message && <p role="status" style={messageStyle}>{message}</p>}
                         </>
                     )}
@@ -190,4 +148,3 @@ const statStyle = { minWidth: 0, display: 'grid', gridTemplateColumns: '20px 1fr
 const statValueStyle = { color: '#1e293b', fontWeight: 700, fontSize: '0.9rem' };
 const statLabelStyle = { gridColumn: '1 / -1', overflow: 'hidden', color: '#64748b', fontSize: '0.67rem', textOverflow: 'ellipsis', whiteSpace: 'nowrap' };
 const messageStyle = { color: '#0369a1', fontSize: '0.78rem' };
-const reviewRequestStatusStyle = { padding: '9px', borderRadius: '4px', background: '#f0fdf4', color: '#166534', fontSize: '0.78rem', fontWeight: 600 };

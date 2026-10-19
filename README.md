@@ -24,6 +24,8 @@ $env:DJANGO_SECRET_KEY = "<a generated random secret>"
 $env:UNIPUB_ADMIN_PASSWORD = "<your strong admin password>"
 ```
 
+Configure `EMAIL_HOST`, `EMAIL_HOST_USER`, `EMAIL_HOST_PASSWORD`, and `DEFAULT_FROM_EMAIL` to enable supervisor and submitter email notifications. The email settings in `.env.example` are placeholders; set real values in the deployment environment and never commit credentials. Email is sent when a publication is submitted or resubmitted, revisions are requested, or a publication is approved.
+
 ```powershell
 python manage.py migrate
 python manage.py runserver
@@ -39,6 +41,12 @@ npm run dev
 ```
 
 The frontend API client currently targets `http://localhost:8000/api/`.
+
+## Supervisor review workflow
+
+Students and lecturers select an assigned lecturer supervisor during registration. Administrators can assign or change supervisors in the account directory; each supervisor can be assigned to multiple users. Publication submissions are routed to the submitter's assigned supervisor for review. Supervisors can request revisions with written feedback or approve the manuscript, and the submitter is emailed about review decisions.
+
+After upgrading an existing database, run migrations and use the administrator account directory to assign supervisors to existing users. Legacy reviewer accounts are converted to lecturers by the migration.
 
 ## Local data
 

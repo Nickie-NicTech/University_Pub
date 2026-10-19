@@ -40,7 +40,6 @@ export default function Login({ onLoginSuccess }) {
             <form className="admin-login-form" onSubmit={handleSubmit}>
                 <span className="admin-breadcrumb">UNIPUB / SECURE ACCESS</span>
                 <h1>Sign in to UniPub</h1>
-                <p>Use your account to access the repository. Students, lecturers, reviewers, and administrators all sign in here.</p>
                 {error && <div className="admin-alert" role="alert">{error}</div>}
                 <label>Username<input autoComplete="username" value={username} onChange={(event) => setUsername(event.target.value)} required /></label>
                 <label>Password<input type="password" autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} required /></label>

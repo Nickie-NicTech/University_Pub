@@ -1,13 +1,12 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Activity, Bell, BookOpenCheck, Check, Database, LayoutDashboard, LogOut, Pencil, Plus, Search, ShieldCheck, Trash2, Users, X } from 'lucide-react';
+import { Activity, Bell, BookOpenCheck, Check, Database, LayoutDashboard, LogOut, Pencil, Plus, Search, Trash2, Users, X } from 'lucide-react';
 import API from '../api';
 import './AdminPortal.css';
 
 const sections = [
     { id: 'overview', label: 'Overview', icon: LayoutDashboard },
     { id: 'users', label: 'Users', icon: Users },
-    { id: 'requests', label: 'Reviewer requests', icon: ShieldCheck },
     { id: 'broadcasts', label: 'Broadcasts', icon: Bell },
     { id: 'directory', label: 'University directory', icon: Database },
 ];
@@ -16,7 +15,6 @@ export default function AdminPortal({ onLogout }) {
     const [section, setSection] = useState('overview');
     const [analytics, setAnalytics] = useState(null);
     const [users, setUsers] = useState([]);
-    const [requests, setRequests] = useState([]);
     const [broadcasts, setBroadcasts] = useState([]);
     const [directory, setDirectory] = useState([]);
     const [error, setError] = useState('');
@@ -24,15 +22,13 @@ export default function AdminPortal({ onLogout }) {
 
     const refresh = async () => {
         try {
-            const [metrics, people, applications, messages, directoryRecords] = await Promise.all([
+            const [metrics, people, messages, directoryRecords] = await Promise.all([
                 API.get('admin/analytics/'), API.get('admin/users/'),
-                API.get('admin/reviewer-requests/'), API.get('admin/broadcasts/'),
-                API.get('admin/university-directory/'),
+                API.get('admin/broadcasts/'), API.get('admin/university-directory/'),
             ]);
             setError('');
             setAnalytics(metrics.data);
             setUsers(people.data);
-            setRequests(applications.data);
             setBroadcasts(messages.data);
             setDirectory(directoryRecords.data);
         } catch (requestError) {
@@ -58,7 +54,6 @@ export default function AdminPortal({ onLogout }) {
                     {sections.map(({ id, label, icon: Icon }) => (
                         <button key={id} className={`admin-nav-item ${section === id ? 'is-active' : ''}`} onClick={() => setSection(id)}>
                             <Icon size={17} /><span>{label}</span>
-                            {id === 'requests' && analytics?.pending_reviewer_requests > 0 && <b className="admin-nav-count">{analytics.pending_reviewer_requests}</b>}
                         </button>
                     ))}
                 </nav>
@@ -68,9 +63,8 @@ export default function AdminPortal({ onLogout }) {
                 <header className="admin-topbar"><div><span className="admin-breadcrumb">UNIPUB / ADMINISTRATION</span><h1>{sections.find((item) => item.id === section)?.label}</h1></div><button className="admin-icon-button" onClick={refresh} title="Refresh dashboard" aria-label="Refresh dashboard"><Activity size={18} /></button></header>
                 <div className="admin-content">
                     {error && <div className="admin-alert" role="alert">{error}</div>}
-                    {section === 'overview' && <Overview analytics={analytics} requests={requests} onReview={() => setSection('requests')} />}
+                    {section === 'overview' && <Overview analytics={analytics} onManageUsers={() => setSection('users')} />}
                     {section === 'users' && <UserManagement users={users} onRefresh={refresh} />}
-                    {section === 'requests' && <ReviewerRequests requests={requests} onRefresh={refresh} />}
                     {section === 'broadcasts' && <Broadcasts messages={broadcasts} onRefresh={refresh} />}
                     {section === 'directory' && <UniversityDirectory entries={directory} onRefresh={refresh} />}
                 </div>
@@ -79,18 +73,17 @@ export default function AdminPortal({ onLogout }) {
     );
 }
 
-function Overview({ analytics, requests, onReview }) {
+function Overview({ analytics, onManageUsers }) {
     const metrics = [
         ['Registered users', analytics?.users ?? '—', Users, 'Accounts on the platform'],
-        ['Active reviewers', analytics?.reviewers ?? '—', ShieldCheck, 'Approved reviewer roles'],
+        ['Active supervisors', analytics?.supervisors ?? '—', Users, 'Lecturers assigned to supervise users'],
         ['Publications', analytics?.publications ?? '—', BookOpenCheck, `${analytics?.approved_publications ?? 0} approved`],
         ['Downloads', analytics?.downloads ?? '—', Activity, 'Across all publications'],
     ];
     return <>
         <div className="admin-section-intro"><div><h2>Platform pulse</h2><p>Current repository activity and access overview.</p></div><span className="admin-updated">LIVE DATA</span></div>
         <div className="admin-metrics">{metrics.map(([label, value, Icon, note]) => <article className="admin-metric" key={label}><div className="admin-metric-top"><span>{label}</span><Icon size={18} /></div><strong>{value}</strong><small>{note}</small></article>)}</div>
-        <section className="admin-panel admin-request-summary"><div><span className="admin-panel-kicker">ACCESS QUEUE</span><h2>Reviewer applications</h2><p>{analytics?.pending_reviewer_requests ?? 0} awaiting a decision</p></div><button className="admin-secondary" onClick={onReview}>Review requests <span aria-hidden="true">→</span></button></section>
-        <section className="admin-panel"><div className="admin-panel-heading"><div><span className="admin-panel-kicker">LATEST ACTIVITY</span><h2>Recent requests</h2></div><span className="admin-count-label">{requests.filter((item) => item.status === 'PENDING').length} PENDING</span></div><div className="admin-recent-list">{requests.filter((item) => item.status === 'PENDING').slice(0, 4).map((request) => <div className="admin-recent-row" key={request.id}><div className="admin-avatar">{request.username?.slice(0, 1).toUpperCase()}</div><div><strong>{request.username}</strong><span>{request.expertise} · {request.department || 'No department'}</span></div><span className="admin-status pending">Pending</span></div>)}{!requests.some((item) => item.status === 'PENDING') && <p className="admin-empty">No reviewer applications are waiting.</p>}</div></section>
+        <section className="admin-panel admin-request-summary"><div><span className="admin-panel-kicker">PUBLICATION REVIEW</span><h2>Lecturers review publications</h2><p>Researchers invite a supervisor and optional co-supervisor when submitting each publication.</p></div><button className="admin-secondary" onClick={onManageUsers}>Manage users <span aria-hidden="true">→</span></button></section>
     </>;
 }
 
@@ -112,7 +105,7 @@ function UserManagement({ users, onRefresh }) {
     };
 
     return <>
-        <div className="admin-section-intro"><div><h2>Account directory</h2><p>Assign roles, update account details, or disable access.</p></div><button className="admin-primary compact" onClick={() => setShowCreate((value) => !value)}><Plus size={16} /> Add user</button></div>
+        <div className="admin-section-intro"><div><h2>Account directory</h2><p>Assign student and lecturer accounts to lecturer supervisors who review their publications.</p></div><button className="admin-primary compact" onClick={() => setShowCreate((value) => !value)}><Plus size={16} /> Add user</button></div>
         {error && <div className="admin-alert" role="alert">{error}</div>}
         {showCreate && <CreateUser onCreated={async () => { setShowCreate(false); await onRefresh(); }} onError={setError} />}
         <div className="admin-table-tools"><span>{filtered.length} accounts</span><label className="admin-search"><Search size={16} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search accounts" /></label></div>
@@ -121,7 +114,6 @@ function UserManagement({ users, onRefresh }) {
 }
 
 function UserRow({ user, onSave, onDelete }) {
-    const [role, setRole] = useState(user.role);
     const [editing, setEditing] = useState(false);
     const [details, setDetails] = useState({ first_name: user.first_name || '', last_name: user.last_name || '', email: user.email || '', department: user.department || '' });
     const saveDetails = async (event) => {
@@ -129,7 +121,7 @@ function UserRow({ user, onSave, onDelete }) {
         if (await onSave(user.id, details)) setEditing(false);
     };
     return <>
-        <tr><td><strong>{user.first_name || user.last_name ? `${user.first_name} ${user.last_name}`.trim() : user.username}</strong><span className="admin-table-sub">@{user.username}{user.email ? ` · ${user.email}` : ''}</span></td><td>{user.department || '—'}</td><td><select className="admin-select" value={role === 'APPROVER' ? 'REVIEWER' : role} onChange={(event) => { setRole(event.target.value); onSave(user.id, { role: event.target.value }); }}><option value="STUDENT">Student</option><option value="LECTURER">Lecturer</option><option value="REVIEWER">Reviewer</option></select></td><td><button className={`admin-access ${user.is_active ? 'enabled' : 'disabled'}`} onClick={() => onSave(user.id, { is_active: !user.is_active })}>{user.is_active ? 'Active' : 'Disabled'}</button></td><td><div className="admin-row-actions"><button className="admin-danger-icon" title={`Edit ${user.username}`} aria-label={`Edit ${user.username}`} onClick={() => setEditing((value) => !value)}><Pencil size={15} /></button><button className="admin-danger-icon" title={`Remove ${user.username}`} aria-label={`Remove ${user.username}`} onClick={() => onDelete(user)}><Trash2 size={16} /></button></div></td></tr>
+        <tr><td><strong>{user.first_name || user.last_name ? `${user.first_name} ${user.last_name}`.trim() : user.username}</strong><span className="admin-table-sub">@{user.username}{user.email ? ` · ${user.email}` : ''}</span></td><td>{user.department || '—'}</td><td>{user.role === 'ADMIN' ? 'Administrator' : user.role === 'LECTURER' ? 'Lecturer' : 'Student'}</td><td><button className={`admin-access ${user.is_active ? 'enabled' : 'disabled'}`} onClick={() => onSave(user.id, { is_active: !user.is_active })}>{user.is_active ? 'Active' : 'Disabled'}</button></td><td><div className="admin-row-actions"><button className="admin-danger-icon" title={`Edit ${user.username}`} aria-label={`Edit ${user.username}`} onClick={() => setEditing((value) => !value)}><Pencil size={15} /></button><button className="admin-danger-icon" title={`Remove ${user.username}`} aria-label={`Remove ${user.username}`} onClick={() => onDelete(user)}><Trash2 size={16} /></button></div></td></tr>
         {editing && <tr className="admin-edit-row"><td colSpan="5"><form onSubmit={saveDetails}><div className="admin-form-grid">{[['first_name', 'First name'], ['last_name', 'Last name'], ['email', 'Email'], ['department', 'Department']].map(([field, label]) => <label key={field}>{label}<input type={field === 'email' ? 'email' : 'text'} value={details[field]} onChange={(event) => setDetails((current) => ({ ...current, [field]: event.target.value }))} /></label>)}</div><div className="admin-application-actions"><button type="button" className="admin-secondary" onClick={() => setEditing(false)}>Cancel</button><button className="admin-primary compact">Save profile details</button></div></form></td></tr>}
     </>;
 }
@@ -140,27 +132,14 @@ function CreateUser({ onCreated, onError }) {
     const change = (event) => setForm((current) => ({ ...current, [event.target.name]: event.target.value }));
     const submit = async (event) => {
         event.preventDefault(); setBusy(true); onError('');
-        try { await API.post('admin/users/', form); await onCreated(); }
+        try {
+            await API.post('admin/users/', form);
+            await onCreated();
+        }
         catch (requestError) { onError(requestError.response?.data ? Object.values(requestError.response.data).flat().join(' ') : 'Unable to create account.'); }
         finally { setBusy(false); }
     };
-    return <form className="admin-panel admin-create-form" onSubmit={submit}><div className="admin-panel-heading"><div><span className="admin-panel-kicker">NEW ACCOUNT</span><h2>Create user</h2></div><button type="button" className="admin-danger-icon" title="Close" aria-label="Close" onClick={() => onCreated()}><X size={17} /></button></div><div className="admin-form-grid">{[['username', 'Username'], ['password', 'Temporary password'], ['first_name', 'First name'], ['last_name', 'Last name'], ['email', 'Email'], ['department', 'Department']].map(([name, label]) => <label key={name}>{label}<input name={name} type={name === 'password' ? 'password' : name === 'email' ? 'email' : 'text'} value={form[name]} onChange={change} required={['username', 'password'].includes(name)} minLength={name === 'password' ? 8 : undefined} /></label>)}<label>Role<select name="role" value={form.role} onChange={change}><option value="STUDENT">Student</option><option value="LECTURER">Lecturer</option><option value="REVIEWER">Reviewer</option></select></label></div><button className="admin-primary compact" disabled={busy}><Plus size={16} /> Create account</button></form>;
-}
-
-function ReviewerRequests({ requests, onRefresh }) {
-    const [filter, setFilter] = useState('PENDING');
-    const [error, setError] = useState('');
-    const visible = requests.filter((item) => filter === 'ALL' || item.status === filter);
-    const decide = async (id, status) => {
-        setError('');
-        try { await API.patch(`admin/reviewer-requests/${id}/`, { status }); await onRefresh(); }
-        catch (requestError) { setError(requestError.response?.data?.detail || 'Unable to update application.'); }
-    };
-    return <>
-        <div className="admin-section-intro"><div><h2>Reviewer applications</h2><p>Evaluate subject expertise and approve qualified users.</p></div><div className="admin-segmented">{['PENDING', 'APPROVED', 'REJECTED', 'ALL'].map((value) => <button key={value} className={filter === value ? 'selected' : ''} onClick={() => setFilter(value)}>{value === 'ALL' ? 'All' : `${value[0]}${value.slice(1).toLowerCase()}`}</button>)}</div></div>
-        {error && <div className="admin-alert" role="alert">{error}</div>}
-        <div className="admin-application-list">{visible.map((application) => <article className="admin-application" key={application.id}><div className="admin-application-head"><div className="admin-avatar large">{application.username?.slice(0, 1).toUpperCase()}</div><div><strong>{application.username}</strong><span>{application.department || 'Department not provided'} · {new Date(application.created_at).toLocaleDateString()}</span></div><span className={`admin-status ${application.status.toLowerCase()}`}>{application.status.toLowerCase()}</span></div><div className="admin-application-body"><span className="admin-panel-kicker">SUBJECT EXPERTISE</span><p className="expertise-text">{application.expertise}</p><span className="admin-panel-kicker">APPLICATION STATEMENT</span><p>{application.reason}</p></div>{application.status === 'PENDING' && <div className="admin-application-actions"><button className="admin-secondary" onClick={() => decide(application.id, 'REJECTED')}><X size={15} /> Decline</button><button className="admin-primary compact" onClick={() => decide(application.id, 'APPROVED')}><Check size={15} /> Approve reviewer</button></div>}</article>)}{visible.length === 0 && <div className="admin-panel admin-empty">No {filter === 'ALL' ? '' : filter.toLowerCase()} applications.</div>}</div>
-    </>;
+    return <form className="admin-panel admin-create-form" onSubmit={submit}><div className="admin-panel-heading"><div><span className="admin-panel-kicker">NEW ACCOUNT</span><h2>Create user</h2></div><button type="button" className="admin-danger-icon" title="Close" aria-label="Close" onClick={() => onCreated()}><X size={17} /></button></div><div className="admin-form-grid">{[['username', 'Username'], ['password', 'Temporary password'], ['first_name', 'First name'], ['last_name', 'Last name'], ['email', 'Email'], ['department', 'Department']].map(([name, label]) => <label key={name}>{label}<input name={name} type={name === 'password' ? 'password' : name === 'email' ? 'email' : 'text'} value={form[name]} onChange={change} required={['username', 'password'].includes(name)} minLength={name === 'password' ? 8 : undefined} /></label>)}<label>Role<select name="role" value={form.role} onChange={change}><option value="STUDENT">Student</option><option value="LECTURER">Lecturer</option></select></label></div><button className="admin-primary compact" disabled={busy}><Plus size={16} /> Create account</button></form>;
 }
 
 function Broadcasts({ messages, onRefresh }) {

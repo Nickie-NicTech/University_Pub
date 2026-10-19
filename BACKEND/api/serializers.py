@@ -4,7 +4,7 @@ from django.contrib.auth.models import User
 from django.db import transaction
 import re
 from django.db.models import Sum
-from .models import Publication, AuthorProfile, UserProfile, PublicationDeletionRequest, ReviewerApplication, BroadcastMessage, UniversityDirectoryEntry
+from .models import Publication, PublicationReviewInvitation, AuthorProfile, UserProfile, PublicationDeletionRequest, UserNotification, BroadcastMessage, UniversityDirectoryEntry
 
 class RepositoryTokenObtainPairSerializer(TokenObtainPairSerializer):
     @classmethod
@@ -66,7 +66,6 @@ class UserProfileSerializer(serializers.ModelSerializer):
     def get_pending_deletion_requests(self, profile):
         return profile.user.publication_deletion_requests.filter(status='PENDING').count()
 
-
 class AuthorProfileSerializer(serializers.ModelSerializer):
     name = serializers.SerializerMethodField()
 
@@ -86,21 +85,131 @@ class PublicationSerializer(serializers.ModelSerializer):
         required=False,
     )
     authors_details = AuthorProfileSerializer(source='authors', many=True, read_only=True)
+    supervisor = serializers.PrimaryKeyRelatedField(
+        queryset=User.objects.filter(profile__role='LECTURER', is_active=True),
+        write_only=True,
+        required=False,
+    )
+    co_supervisor = serializers.PrimaryKeyRelatedField(
+        queryset=User.objects.filter(profile__role='LECTURER', is_active=True),
+        write_only=True,
+        required=False,
+        allow_null=True,
+    )
+    supervisor_id = serializers.SerializerMethodField()
+    co_supervisor_id = serializers.SerializerMethodField()
+    supervisor_name = serializers.SerializerMethodField()
+    co_supervisor_name = serializers.SerializerMethodField()
+    review_invitations = serializers.SerializerMethodField()
+    review_invitation_status = serializers.SerializerMethodField()
+    my_review_decision = serializers.SerializerMethodField()
     owner_username = serializers.CharField(source='owner.username', read_only=True, default=None)
     is_owner = serializers.SerializerMethodField()
+    is_reviewer = serializers.SerializerMethodField()
+    is_invited_reviewer = serializers.SerializerMethodField()
 
     class Meta:
         model = Publication
-        fields = ['id', 'title', 'abstract', 'pub_type', 'subject_area', 'authors', 'authors_details', 'file_attachment', 'download_count', 'upload_date', 'is_approved', 'review_status', 'rejection_reason', 'owner_username', 'is_owner']
-        read_only_fields = ['download_count', 'is_approved', 'review_status', 'rejection_reason', 'owner_username', 'is_owner', 'upload_date']
+        fields = ['id', 'title', 'abstract', 'pub_type', 'subject_area', 'authors', 'authors_details', 'supervisor', 'co_supervisor', 'supervisor_id', 'co_supervisor_id', 'supervisor_name', 'co_supervisor_name', 'review_invitations', 'review_invitation_status', 'my_review_decision', 'file_attachment', 'download_count', 'upload_date', 'is_approved', 'review_status', 'review_feedback', 'owner_username', 'is_owner', 'is_reviewer', 'is_invited_reviewer']
+        read_only_fields = ['supervisor_id', 'co_supervisor_id', 'download_count', 'is_approved', 'review_status', 'review_feedback', 'supervisor_name', 'co_supervisor_name', 'review_invitations', 'review_invitation_status', 'my_review_decision', 'owner_username', 'is_owner', 'is_reviewer', 'is_invited_reviewer', 'upload_date']
+
+    def validate(self, attrs):
+        if self.initial_data.get('co_supervisor') == '':
+            attrs['co_supervisor'] = None
+        request = self.context.get('request')
+        supervisor = attrs.get('supervisor')
+        co_supervisor = attrs.get('co_supervisor')
+        if self.instance:
+            current = {
+                invitation.role: invitation.reviewer
+                for invitation in self.instance.review_invitations.select_related('reviewer')
+            }
+            supervisor = supervisor or current.get('SUPERVISOR')
+            co_supervisor = attrs.get('co_supervisor', current.get('CO_SUPERVISOR'))
+            if self.instance.review_invitations.filter(status='ACCEPTED').exists() and (
+                supervisor != current.get('SUPERVISOR')
+                or co_supervisor != current.get('CO_SUPERVISOR')
+            ):
+                raise serializers.ValidationError(
+                    'Reviewer assignments cannot be changed after an invitation has been accepted.'
+                )
+        if supervisor is None and self.instance is None:
+            raise serializers.ValidationError({'supervisor': 'Select a lecturer supervisor for this publication.'})
+        if co_supervisor and supervisor and co_supervisor.pk == supervisor.pk:
+            raise serializers.ValidationError({'co_supervisor': 'The supervisor and co-supervisor must be different lecturers.'})
+        if request and request.user.is_authenticated and (
+            (supervisor and supervisor.pk == request.user.pk)
+            or (co_supervisor and co_supervisor.pk == request.user.pk)
+        ):
+            raise serializers.ValidationError('You cannot assign yourself as your own publication reviewer.')
+        if supervisor is not None:
+            attrs['supervisor'] = supervisor
+        if co_supervisor is not None or 'co_supervisor' in attrs:
+            attrs['co_supervisor'] = co_supervisor
+        return attrs
 
     def get_is_owner(self, obj):
         request = self.context.get('request')
         return bool(request and request.user.is_authenticated and obj.owner_id == request.user.id)
 
+    def _review_invitation_for_role(self, obj, role):
+        return next((item for item in obj.review_invitations.all() if item.role == role), None)
+
+    def get_supervisor_name(self, obj):
+        invitation = self._review_invitation_for_role(obj, 'SUPERVISOR')
+        return invitation.reviewer.get_full_name() or invitation.reviewer.username if invitation else ''
+
+    def get_supervisor_id(self, obj):
+        invitation = self._review_invitation_for_role(obj, 'SUPERVISOR')
+        return invitation.reviewer_id if invitation else None
+
+    def get_co_supervisor_id(self, obj):
+        invitation = self._review_invitation_for_role(obj, 'CO_SUPERVISOR')
+        return invitation.reviewer_id if invitation else None
+
+    def get_co_supervisor_name(self, obj):
+        invitation = self._review_invitation_for_role(obj, 'CO_SUPERVISOR')
+        return invitation.reviewer.get_full_name() or invitation.reviewer.username if invitation else ''
+
+    def get_review_invitations(self, obj):
+        return PublicationReviewInvitationSerializer(
+            obj.review_invitations.select_related('reviewer'),
+            many=True,
+        ).data
+
+    def get_review_invitation_status(self, obj):
+        request = self.context.get('request')
+        if not request or not request.user.is_authenticated:
+            return ''
+        invitation = obj.review_invitations.filter(reviewer=request.user).first()
+        return invitation.status if invitation else ''
+
+    def get_my_review_decision(self, obj):
+        request = self.context.get('request')
+        if not request or not request.user.is_authenticated:
+            return ''
+        invitation = obj.review_invitations.filter(reviewer=request.user).first()
+        return invitation.decision if invitation else ''
+
+    def get_is_reviewer(self, obj):
+        request = self.context.get('request')
+        return bool(
+            request and request.user.is_authenticated
+            and obj.review_invitations.filter(reviewer=request.user, status='ACCEPTED').exists()
+        )
+
+    def get_is_invited_reviewer(self, obj):
+        request = self.context.get('request')
+        return bool(
+            request and request.user.is_authenticated
+            and obj.review_invitations.filter(reviewer=request.user, status='INVITED').exists()
+        )
+
     def create(self, validated_data):
         owner = validated_data.pop('owner', self.context['request'].user)
         authors = validated_data.pop('authors', None)
+        supervisor = validated_data.pop('supervisor')
+        co_supervisor = validated_data.pop('co_supervisor', None)
         if not authors:
             user = self.context['request'].user
             try:
@@ -115,7 +224,73 @@ class PublicationSerializer(serializers.ModelSerializer):
 
         publication = Publication.objects.create(owner=owner, **validated_data)
         publication.authors.set(authors)
+        PublicationReviewInvitation.objects.create(
+            publication=publication,
+            reviewer=supervisor,
+            role='SUPERVISOR',
+        )
+        if co_supervisor:
+            PublicationReviewInvitation.objects.create(
+                publication=publication,
+                reviewer=co_supervisor,
+                role='CO_SUPERVISOR',
+            )
         return publication
+
+    def update(self, instance, validated_data):
+        current = {
+            invitation.role: invitation.reviewer
+            for invitation in instance.review_invitations.select_related('reviewer')
+        }
+        supervisor = validated_data.pop('supervisor', current.get('SUPERVISOR'))
+        co_supervisor = validated_data.pop('co_supervisor', current.get('CO_SUPERVISOR'))
+        authors = validated_data.pop('authors', None)
+        publication = super().update(instance, validated_data)
+        if authors is not None:
+            publication.authors.set(authors)
+        for role, reviewer in [('SUPERVISOR', supervisor), ('CO_SUPERVISOR', co_supervisor)]:
+            invitation = publication.review_invitations.filter(role=role).first()
+            if reviewer is None:
+                if invitation:
+                    invitation.delete()
+            elif invitation is None:
+                PublicationReviewInvitation.objects.create(
+                    publication=publication,
+                    reviewer=reviewer,
+                    role=role,
+                )
+            elif invitation.reviewer_id != reviewer.pk:
+                invitation.reviewer = reviewer
+                invitation.status = 'INVITED'
+                invitation.decision = 'PENDING'
+                invitation.feedback = ''
+                invitation.responded_at = None
+                invitation.save()
+            elif invitation.status == 'DECLINED':
+                invitation.status = 'INVITED'
+                invitation.decision = 'PENDING'
+                invitation.feedback = ''
+                invitation.responded_at = None
+                invitation.save()
+        return publication
+
+
+class PublicationReviewInvitationSerializer(serializers.ModelSerializer):
+    reviewer_name = serializers.SerializerMethodField()
+
+    class Meta:
+        model = PublicationReviewInvitation
+        fields = ['id', 'reviewer', 'reviewer_name', 'role', 'status', 'decision', 'feedback', 'responded_at']
+
+    def get_reviewer_name(self, invitation):
+        return invitation.reviewer.get_full_name() or invitation.reviewer.username
+
+
+class UserNotificationSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = UserNotification
+        fields = ['id', 'title', 'message', 'created_at', 'read_at']
+        read_only_fields = fields
 
 
 class PublicationDeletionRequestSerializer(serializers.ModelSerializer):
@@ -189,16 +364,6 @@ class UserRegistrationSerializer(serializers.ModelSerializer):
         return user
 
 
-class ReviewerApplicationSerializer(serializers.ModelSerializer):
-    username = serializers.CharField(source='user.username', read_only=True)
-    department = serializers.CharField(source='user.profile.department', read_only=True)
-
-    class Meta:
-        model = ReviewerApplication
-        fields = ['id', 'username', 'department', 'expertise', 'reason', 'status', 'created_at', 'reviewed_at']
-        read_only_fields = ['id', 'username', 'department', 'status', 'created_at', 'reviewed_at']
-
-
 class BroadcastMessageSerializer(serializers.ModelSerializer):
     created_by_username = serializers.CharField(source='created_by.username', read_only=True)
 
@@ -220,7 +385,7 @@ class AdminUserSerializer(serializers.ModelSerializer):
         fields = ['id', 'username', 'first_name', 'last_name', 'email', 'role', 'department', 'is_active']
 
     def validate_role(self, role):
-        if role not in {'STUDENT', 'LECTURER', 'REVIEWER'}:
+        if role not in {'STUDENT', 'LECTURER'}:
             raise serializers.ValidationError('Choose a supported non-admin role.')
         return role
 
@@ -239,7 +404,7 @@ class AdminUserCreateSerializer(serializers.Serializer):
     first_name = serializers.CharField(required=False, allow_blank=True)
     last_name = serializers.CharField(required=False, allow_blank=True)
     email = serializers.EmailField(required=False, allow_blank=True)
-    role = serializers.ChoiceField(choices=['STUDENT', 'LECTURER', 'REVIEWER'])
+    role = serializers.ChoiceField(choices=['STUDENT', 'LECTURER'])
     department = serializers.CharField(required=False, allow_blank=True)
 
     def validate_username(self, username):
@@ -258,6 +423,20 @@ class AdminUserCreateSerializer(serializers.Serializer):
             department=department,
         )
         return UserProfile.objects.select_related('user').get(user=user)
+
+
+class SupervisorSerializer(serializers.ModelSerializer):
+    name = serializers.SerializerMethodField()
+    username = serializers.CharField(source='user.username', read_only=True)
+    user_id = serializers.IntegerField(read_only=True)
+
+    class Meta:
+        model = UserProfile
+        fields = ['id', 'user_id', 'name', 'username', 'department']
+
+    def get_name(self, profile):
+        return profile.user.get_full_name() or profile.user.username
+
 
 class UniversityDirectoryEntrySerializer(serializers.ModelSerializer):
     full_name = serializers.SerializerMethodField()

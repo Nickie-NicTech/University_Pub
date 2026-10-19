@@ -1,7 +1,9 @@
 import secrets
+import logging
+from smtplib import SMTPException
 from django.db.models import Q, F, Sum
-from django.utils import timezone
 from django.conf import settings
+from django.core.mail import send_mail
 from django.utils import timezone
 from django.http import FileResponse
 from django.shortcuts import get_object_or_404
@@ -10,14 +12,38 @@ from rest_framework.decorators import action
 from rest_framework.views import APIView
 from rest_framework.exceptions import NotFound, PermissionDenied
 from rest_framework.response import Response
-from .models import Publication, AuthorProfile, PublicationDeletionRequest, UserProfile, ReviewerApplication, BroadcastMessage, UniversityDirectoryEntry
-from .serializers import PublicationSerializer, AuthorProfileSerializer, UserRegistrationSerializer, PublicationDeletionRequestSerializer, UserProfileSerializer, ReviewerApplicationSerializer, BroadcastMessageSerializer, AdminUserSerializer, AdminUserCreateSerializer, UniversityDirectoryEntrySerializer
+from .models import Publication, PublicationReviewInvitation, AuthorProfile, PublicationDeletionRequest, UserProfile, UserNotification, BroadcastMessage, UniversityDirectoryEntry
+from .serializers import PublicationSerializer, AuthorProfileSerializer, UserRegistrationSerializer, PublicationDeletionRequestSerializer, UserProfileSerializer, UserNotificationSerializer, BroadcastMessageSerializer, AdminUserSerializer, AdminUserCreateSerializer, UniversityDirectoryEntrySerializer, SupervisorSerializer
 import random
 from django.contrib.auth.models import User
 from rest_framework import generics, permissions
 from rest_framework_simplejwt.views import TokenObtainPairView
 from .serializers import RepositoryTokenObtainPairSerializer
 from rest_framework_simplejwt.tokens import RefreshToken
+
+logger = logging.getLogger(__name__)
+
+
+def notify_user(recipient, subject, message):
+    UserNotification.objects.create(user=recipient, title=subject, message=message)
+    if not recipient.email:
+        return 'An in-app notification was saved, but this user has no email address.'
+    try:
+        sent_count = send_mail(
+            subject,
+            message,
+            settings.DEFAULT_FROM_EMAIL,
+            [recipient.email],
+            fail_silently=False,
+        )
+    except (SMTPException, OSError):
+        logger.exception('Unable to send publication review email to user %s.', recipient.pk)
+        return 'An in-app notification was saved, but the email could not be sent.'
+    if sent_count != 1:
+        logger.error('Publication review email was not sent to user %s.', recipient.pk)
+        return 'An in-app notification was saved, but the email could not be sent.'
+    return ''
+
 
 class RepositoryTokenObtainPairView(TokenObtainPairView):
     serializer_class = RepositoryTokenObtainPairSerializer
@@ -56,14 +82,16 @@ class PublicationViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         queryset = Publication.objects.all().order_by('-upload_date')
+        queryset = queryset.prefetch_related('review_invitations__reviewer', 'authors')
         user = self.request.user
-        is_reviewer = user.is_authenticated and (
-            user.is_staff or getattr(getattr(user, 'profile', None), 'role', None) == 'REVIEWER'
-        )
-        if user.is_authenticated and not is_reviewer:
-            queryset = queryset.filter(Q(is_approved=True) | Q(owner=user))
-        elif not is_reviewer:
+        if not user.is_authenticated:
             queryset = queryset.filter(is_approved=True)
+        elif not user.is_staff:
+            queryset = queryset.filter(
+                Q(is_approved=True)
+                | Q(owner=user)
+                | Q(review_invitations__reviewer=user)
+            ).distinct()
 
         search_query = self.request.query_params.get('search', None)
         if search_query:
@@ -82,13 +110,73 @@ class PublicationViewSet(viewsets.ModelViewSet):
             raise PermissionDenied('Only the publication owner may edit this record.')
         if publication.is_approved or publication.review_status == 'APPROVED':
             raise PermissionDenied('Approved publications cannot be edited.')
-        serializer.save(is_approved=False, review_status='PENDING', rejection_reason='')
+        if publication.review_status == 'PENDING' and publication.review_invitations.filter(status='ACCEPTED').exists():
+            raise PermissionDenied('Wait for your accepted reviewers to request revisions before changing this publication.')
+        previously_invited = set(
+            publication.review_invitations.filter(status='INVITED').values_list('reviewer_id', flat=True)
+        )
+        resubmitting = publication.review_status == 'REVISION_REQUESTED'
+        publication = serializer.save(is_approved=False, review_feedback='')
+        accepted = publication.review_invitations.filter(status='ACCEPTED')
+        pending_invitations = publication.review_invitations.filter(status='INVITED').exists()
+        if pending_invitations:
+            publication.review_status = 'PENDING_INVITATIONS'
+        elif not accepted.exists():
+            publication.review_status = 'REVIEWER_DECLINED'
+        else:
+            publication.review_status = 'PENDING'
+        if resubmitting:
+            accepted.update(decision='PENDING')
+        publication.save(update_fields=['review_status'])
+        self._notification_warning = ''
+        invitees = publication.review_invitations.filter(status='INVITED').exclude(
+            reviewer_id__in=previously_invited
+        ).select_related('reviewer')
+        for invitation in invitees:
+            warning = notify_user(
+                invitation.reviewer,
+                f'Publication review invitation: {publication.title}',
+                f'{publication.owner.get_full_name() or publication.owner.username} invited you to review "{publication.title}" as {invitation.get_role_display().lower()}.',
+            )
+            self._notification_warning = self._notification_warning or warning
+        if resubmitting:
+            for invitation in accepted.select_related('reviewer'):
+                warning = notify_user(
+                    invitation.reviewer,
+                    f'Publication resubmitted: {publication.title}',
+                    f'{publication.owner.get_full_name() or publication.owner.username} revised "{publication.title}" and resubmitted it for your review.',
+                )
+                self._notification_warning = self._notification_warning or warning
 
     def perform_create(self, serializer):
-        profile = getattr(self.request.user, 'profile', None)
-        if profile and profile.role == 'REVIEWER':
-            raise PermissionDenied('Reviewers cannot create publications.')
-        serializer.save(owner=self.request.user)
+        profile = UserProfile.objects.filter(user=self.request.user).first()
+        if not profile or profile.role not in {'STUDENT', 'LECTURER'}:
+            raise PermissionDenied('Only students and lecturers may submit publications.')
+        publication = serializer.save(owner=self.request.user)
+        publication.review_status = 'PENDING_INVITATIONS'
+        publication.save(update_fields=['review_status'])
+        self._notification_warning = ''
+        for invitation in publication.review_invitations.select_related('reviewer'):
+            warning = notify_user(
+                invitation.reviewer,
+                f'Publication review invitation: {publication.title}',
+                f'{self.request.user.get_full_name() or self.request.user.username} invited you to review "{publication.title}" as {invitation.get_role_display().lower()}.',
+            )
+            self._notification_warning = self._notification_warning or warning
+
+    def create(self, request, *args, **kwargs):
+        self._notification_warning = ''
+        response = super().create(request, *args, **kwargs)
+        if self._notification_warning:
+            response.data['notification_warning'] = self._notification_warning
+        return response
+
+    def update(self, request, *args, **kwargs):
+        self._notification_warning = ''
+        response = super().update(request, *args, **kwargs)
+        if self._notification_warning:
+            response.data['notification_warning'] = self._notification_warning
+        return response
 
     def destroy(self, request, *args, **kwargs):
         return Response(
@@ -116,40 +204,93 @@ class PublicationViewSet(viewsets.ModelViewSet):
             content_type='application/pdf',
         )
 
-    @action(detail=True, methods=['post'], url_path='approve')
-    def approve(self, request, pk=None):
+    @action(detail=True, methods=['post'], url_path='review-invitation')
+    def review_invitation(self, request, pk=None):
         publication = self.get_object()
-        profile = getattr(request.user, 'profile', None)
-        if not (request.user.is_staff or (profile and profile.role == 'REVIEWER')):
-            raise PermissionDenied('Only a reviewer may approve publications.')
-        if publication.owner_id == request.user.id:
-            raise PermissionDenied('Reviewers cannot approve their own publications.')
-        if publication.review_status != 'PENDING':
-            return Response({'detail': 'Only pending publications can be approved.'}, status=status.HTTP_409_CONFLICT)
-        publication.is_approved = True
-        publication.review_status = 'APPROVED'
-        publication.rejection_reason = ''
-        publication.save(update_fields=['is_approved', 'review_status', 'rejection_reason'])
-        return Response(self.get_serializer(publication).data)
+        invitation = publication.review_invitations.filter(reviewer=request.user).first()
+        if not invitation:
+            raise PermissionDenied('You are not invited to review this publication.')
+        if invitation.status != 'INVITED':
+            return Response({'detail': 'This review invitation has already been answered.'}, status=status.HTTP_409_CONFLICT)
+        decision = request.data.get('decision')
+        if decision not in {'ACCEPTED', 'DECLINED'}:
+            return Response({'decision': ['Choose ACCEPTED or DECLINED.']}, status=status.HTTP_400_BAD_REQUEST)
+        invitation.status = decision
+        invitation.responded_at = timezone.now()
+        invitation.save(update_fields=['status', 'responded_at'])
+        pending_invitation = publication.review_invitations.filter(status='INVITED').exists()
+        accepted = publication.review_invitations.filter(status='ACCEPTED').exists()
+        if pending_invitation:
+            publication.review_status = 'PENDING_INVITATIONS'
+        elif accepted:
+            publication.review_status = 'PENDING'
+        else:
+            publication.review_status = 'REVIEWER_DECLINED'
+        publication.save(update_fields=['review_status'])
+        response_data = dict(self.get_serializer(publication).data)
+        warning = notify_user(
+            publication.owner,
+            f'Reviewer invitation {decision.lower()}: {publication.title}',
+            f'{request.user.get_full_name() or request.user.username} {decision.lower()} the invitation to review "{publication.title}".',
+        )
+        if warning:
+            response_data['notification_warning'] = warning
+        return Response(response_data)
 
-    @action(detail=True, methods=['post'], url_path='reject')
-    def reject(self, request, pk=None):
+    @action(detail=True, methods=['post'], url_path='review-decision')
+    def review_decision(self, request, pk=None):
         publication = self.get_object()
-        profile = getattr(request.user, 'profile', None)
-        if not (request.user.is_staff or (profile and profile.role == 'REVIEWER')):
-            raise PermissionDenied('Only a reviewer may reject publications.')
-        if publication.owner_id == request.user.id:
-            raise PermissionDenied('Reviewers cannot reject their own publications.')
+        invitation = publication.review_invitations.filter(
+            reviewer=request.user,
+            status='ACCEPTED',
+        ).first()
+        if not invitation:
+            raise PermissionDenied('Accept this publication’s invitation before reviewing it.')
         if publication.review_status != 'PENDING':
-            return Response({'detail': 'Only pending publications can be rejected.'}, status=status.HTTP_409_CONFLICT)
-        reason = request.data.get('reason', '')
-        if not isinstance(reason, str) or not reason.strip():
-            return Response({'reason': ['Provide a reason for rejecting this publication.']}, status=status.HTTP_400_BAD_REQUEST)
-        publication.is_approved = False
-        publication.review_status = 'REJECTED'
-        publication.rejection_reason = reason.strip()
-        publication.save(update_fields=['is_approved', 'review_status', 'rejection_reason'])
-        return Response(self.get_serializer(publication).data)
+            return Response({'detail': 'This publication is not currently accepting reviewer decisions.'}, status=status.HTTP_409_CONFLICT)
+        if invitation.decision != 'PENDING':
+            return Response({'detail': 'You have already submitted a review decision.'}, status=status.HTTP_409_CONFLICT)
+        decision = request.data.get('decision')
+        if decision not in {'APPROVED', 'REVISION_REQUESTED'}:
+            return Response({'decision': ['Choose APPROVED or REVISION_REQUESTED.']}, status=status.HTTP_400_BAD_REQUEST)
+        feedback = request.data.get('feedback', '')
+        if decision == 'REVISION_REQUESTED' and (
+            not isinstance(feedback, str) or len(feedback.strip()) < 5
+        ):
+            return Response({'feedback': ['Provide feedback of at least five characters.']}, status=status.HTTP_400_BAD_REQUEST)
+        if not isinstance(feedback, str):
+            return Response({'feedback': ['Feedback must be text.']}, status=status.HTTP_400_BAD_REQUEST)
+        invitation.decision = decision
+        invitation.feedback = feedback.strip()
+        invitation.save(update_fields=['decision', 'feedback'])
+        publication.review_feedback = invitation.feedback
+        accepted = publication.review_invitations.filter(status='ACCEPTED')
+        pending_invitation = publication.review_invitations.filter(status='INVITED').exists()
+        revision_requested = accepted.filter(decision='REVISION_REQUESTED').exists()
+        all_approved = accepted.exists() and not accepted.exclude(decision='APPROVED').exists()
+        if revision_requested:
+            publication.review_status = 'REVISION_REQUESTED'
+        elif all_approved and not pending_invitation:
+            publication.review_status = 'APPROVED'
+            publication.is_approved = True
+        publication.save(update_fields=['review_status', 'review_feedback', 'is_approved'])
+        if decision == 'REVISION_REQUESTED':
+            title = f'Revisions requested: {publication.title}'
+            message = (
+                f'{request.user.get_full_name() or request.user.username} requested revisions for '
+                f'"{publication.title}":\n\n{invitation.feedback}\n\nPlease revise and resubmit your publication.'
+            )
+        elif publication.is_approved:
+            title = f'Publication approved: {publication.title}'
+            message = f'All accepted reviewers approved "{publication.title}". It is now published in the repository.'
+        else:
+            title = f'Reviewer approved: {publication.title}'
+            message = f'{request.user.get_full_name() or request.user.username} approved "{publication.title}". It is waiting for other reviewers.'
+        response_data = dict(self.get_serializer(publication).data)
+        warning = notify_user(publication.owner, title, message)
+        if warning:
+            response_data['notification_warning'] = warning
+        return Response(response_data)
 
     @action(detail=True, methods=['post'], url_path='request-deletion')
     def request_deletion(self, request, pk=None):
@@ -208,23 +349,31 @@ class CurrentUserProfileView(generics.RetrieveUpdateAPIView):
         return profile
 
 
-class ReviewerApplicationView(APIView):
+class SupervisorListView(generics.ListAPIView):
+    permission_classes = [permissions.AllowAny]
+    serializer_class = SupervisorSerializer
+    queryset = UserProfile.objects.select_related('user').filter(
+        role='LECTURER',
+        user__is_active=True,
+    ).order_by('user__last_name', 'user__first_name', 'user__username')
+
+
+class UserNotificationListView(generics.ListAPIView):
+    permission_classes = [permissions.IsAuthenticated]
+    serializer_class = UserNotificationSerializer
+
+    def get_queryset(self):
+        return UserNotification.objects.filter(user=self.request.user)
+
+
+class UserNotificationReadView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
-    def get(self, request):
-        application = ReviewerApplication.objects.filter(user=request.user).first()
-        return Response(ReviewerApplicationSerializer(application).data if application else None)
-
-    def post(self, request):
-        profile, _ = UserProfile.objects.get_or_create(user=request.user, defaults={'department': ''})
-        if profile.role in {'REVIEWER', 'ADMIN'}:
-            return Response({'detail': 'Your account already has reviewer permissions.'}, status=status.HTTP_409_CONFLICT)
-        if ReviewerApplication.objects.filter(user=request.user, status='PENDING').exists():
-            return Response({'detail': 'You already have a pending reviewer request.'}, status=status.HTTP_409_CONFLICT)
-        serializer = ReviewerApplicationSerializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        application = serializer.save(user=request.user)
-        return Response(ReviewerApplicationSerializer(application).data, status=status.HTTP_201_CREATED)
+    def patch(self, request, pk):
+        notification = get_object_or_404(UserNotification, pk=pk, user=request.user)
+        notification.read_at = timezone.now()
+        notification.save(update_fields=['read_at'])
+        return Response(UserNotificationSerializer(notification).data)
 
 
 class AdminPortalLoginView(APIView):
@@ -286,43 +435,16 @@ class AdminUserDetailView(generics.RetrieveUpdateDestroyAPIView):
             raise PermissionDenied('You cannot remove the active administrator account.')
         instance.user.delete()
 
-
-class AdminReviewerApplicationListView(generics.ListAPIView):
-    permission_classes = [permissions.IsAdminUser]
-    serializer_class = ReviewerApplicationSerializer
-    queryset = ReviewerApplication.objects.select_related('user', 'user__profile').all()
-
-
-class AdminReviewerApplicationDetailView(APIView):
-    permission_classes = [permissions.IsAdminUser]
-
-    def patch(self, request, pk):
-        application = get_object_or_404(ReviewerApplication.objects.select_related('user'), pk=pk)
-        decision = request.data.get('status')
-        if decision not in {'APPROVED', 'REJECTED'}:
-            return Response({'detail': 'Choose APPROVED or REJECTED.'}, status=status.HTTP_400_BAD_REQUEST)
-        application.status = decision
-        application.reviewed_by = request.user
-        application.reviewed_at = timezone.now()
-        application.save(update_fields=['status', 'reviewed_by', 'reviewed_at'])
-        if decision == 'APPROVED':
-            profile, _ = UserProfile.objects.get_or_create(user=application.user, defaults={'department': ''})
-            profile.role = 'REVIEWER'
-            profile.save(update_fields=['role'])
-        return Response(ReviewerApplicationSerializer(application).data)
-
-
 class AdminAnalyticsView(APIView):
     permission_classes = [permissions.IsAdminUser]
 
     def get(self, request):
         return Response({
             'users': User.objects.filter(is_staff=False).count(),
-            'reviewers': UserProfile.objects.filter(role='REVIEWER').count(),
-            'pending_reviewer_requests': ReviewerApplication.objects.filter(status='PENDING').count(),
+            'supervisors': UserProfile.objects.filter(role='LECTURER').count(),
             'publications': Publication.objects.count(),
             'approved_publications': Publication.objects.filter(is_approved=True).count(),
-            'pending_publications': Publication.objects.filter(is_approved=False).count(),
+            'pending_publications': Publication.objects.filter(review_status__in=['PENDING_INVITATIONS', 'PENDING', 'REVISION_REQUESTED']).count(),
             'downloads': Publication.objects.aggregate(total=Sum('download_count'))['total'] or 0,
         })
 

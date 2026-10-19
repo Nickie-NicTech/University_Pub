@@ -7,7 +7,7 @@ from django.contrib.auth.models import User
 from django.test import override_settings
 from rest_framework_simplejwt.tokens import AccessToken
 import re
-from .models import AuthorProfile, Publication, PublicationDeletionRequest, UserProfile, UniversityDirectoryEntry, BroadcastMessage
+from .models import AuthorProfile, Publication, PublicationDeletionRequest, PublicationReviewInvitation, UserNotification, UserProfile, UniversityDirectoryEntry, BroadcastMessage
 from .serializers import RepositoryTokenObtainPairSerializer
 
 class TokenClaimsTests(TestCase):
@@ -29,7 +29,49 @@ class TokenClaimsTests(TestCase):
         self.assertEqual(token['role'], 'STUDENT')
         self.assertTrue(UserProfile.objects.filter(user=user).exists())
 
+@override_settings(
+    EMAIL_BACKEND='django.core.mail.backends.locmem.EmailBackend',
+    DEFAULT_FROM_EMAIL='unipub@example.com',
+)
 class PublicationTests(APITestCase):
+    def create_supervisor(self, username='supervisor'):
+        user = User.objects.create_user(
+            username=username,
+            password='test-password',
+            email=f'{username}@example.com',
+        )
+        profile = UserProfile.objects.create(user=user, role='LECTURER', department='Computing')
+        return user, profile
+
+    def create_member(self, username, supervisor=None, role='STUDENT'):
+        user = User.objects.create_user(
+            username=username,
+            password='test-password',
+            email=f'{username}@example.com',
+        )
+        profile = UserProfile.objects.create(
+            user=user,
+            role=role,
+            department='Computing',
+        )
+        return user, profile
+
+    def create_review_publication(self, owner, reviewer, **fields):
+        publication = Publication.objects.create(
+            owner=owner,
+            title=fields.pop('title', 'Review test paper'),
+            abstract=fields.pop('abstract', 'Abstract'),
+            pub_type=fields.pop('pub_type', 'JOURNAL'),
+            subject_area=fields.pop('subject_area', 'Computing'),
+            **fields,
+        )
+        PublicationReviewInvitation.objects.create(
+            publication=publication,
+            reviewer=reviewer,
+            role='SUPERVISOR',
+        )
+        return publication
+
     def test_registration_verifies_directory_id_and_fills_user_profile(self):
         entry = UniversityDirectoryEntry.objects.create(
             university_id='202600123', person_type='STUDENT',
@@ -149,40 +191,12 @@ class PublicationTests(APITestCase):
     def test_public_registration_cannot_grant_privileged_role(self):
         response = self.client.post(
             reverse('user_register'),
-            {'username': 'self-reviewer', 'password': 'test-password', 'role': 'APPROVER', 'department': 'Computing'},
+            {'username': 'self-reviewer', 'password': 'test-password', 'role': 'REVIEWER', 'department': 'Computing'},
             format='json',
         )
 
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertFalse(User.objects.filter(username='self-reviewer').exists())
-
-    def test_user_can_request_reviewer_access_and_admin_can_approve(self):
-        applicant = User.objects.create_user(username='applicant', password='test-password')
-        UserProfile.objects.create(user=applicant, role='LECTURER', department='Computing')
-        self.client.force_authenticate(user=applicant)
-        application = self.client.post(
-            reverse('reviewer_application'),
-            {'expertise': 'Computer Science', 'reason': 'I have relevant teaching and research experience.'},
-            format='json',
-        )
-        self.assertEqual(application.status_code, status.HTTP_201_CREATED, application.data)
-
-        duplicate = self.client.post(
-            reverse('reviewer_application'),
-            {'expertise': 'Computer Science', 'reason': 'Second request.'},
-            format='json',
-        )
-        self.assertEqual(duplicate.status_code, status.HTTP_409_CONFLICT)
-
-        admin = User.objects.create_superuser(username='portal-admin', password='test-password')
-        self.client.force_authenticate(user=admin)
-        approved = self.client.patch(
-            reverse('admin_reviewer_application_detail', args=[application.data['id']]),
-            {'status': 'APPROVED'},
-            format='json',
-        )
-        self.assertEqual(approved.status_code, status.HTTP_200_OK, approved.data)
-        self.assertEqual(UserProfile.objects.get(user=applicant).role, 'REVIEWER')
 
     def test_admin_user_management_requires_staff(self):
         user = User.objects.create_user(username='ordinary-user', password='test-password')
@@ -242,14 +256,13 @@ class PublicationTests(APITestCase):
         self.assertEqual(response.data['pending_deletion_requests'], 1)
 
     def test_only_owner_can_edit_publication(self):
-        owner = User.objects.create_user(username='owner', password='test-password')
-        other_user = User.objects.create_user(username='other', password='test-password')
-        UserProfile.objects.create(user=owner, role='STUDENT', department='Computing')
-        UserProfile.objects.create(user=other_user, role='STUDENT', department='Computing')
+        _, supervisor = self.create_supervisor()
+        owner, _ = self.create_member('owner', supervisor)
+        other_user, _ = self.create_member('other', supervisor)
         self.client.force_authenticate(user=owner)
         create_response = self.client.post(
             reverse('publication-list'),
-            {'title': 'Owned paper', 'abstract': 'Abstract', 'pub_type': 'JOURNAL', 'subject_area': 'Computing'},
+            {'title': 'Owned paper', 'abstract': 'Abstract', 'pub_type': 'JOURNAL', 'subject_area': 'Computing', 'supervisor': supervisor.user_id},
             format='json',
         )
         publication_id = create_response.data['id']
@@ -264,8 +277,7 @@ class PublicationTests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
 
     def test_owner_cannot_edit_approved_publication(self):
-        owner = User.objects.create_user(username='approved-owner', password='test-password')
-        UserProfile.objects.create(user=owner, role='STUDENT', department='Computing')
+        owner, _ = self.create_member('approved-owner', None)
         publication = Publication.objects.create(
             title='Approved paper', owner=owner, abstract='Original abstract',
             pub_type='JOURNAL', subject_area='Computing', is_approved=True,
@@ -281,20 +293,6 @@ class PublicationTests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
         publication.refresh_from_db()
         self.assertEqual(publication.title, 'Approved paper')
-
-    def test_reviewer_cannot_create_publication(self):
-        reviewer = User.objects.create_user(username='no-upload-reviewer', password='test-password')
-        UserProfile.objects.create(user=reviewer, role='REVIEWER', department='Computing')
-        self.client.force_authenticate(user=reviewer)
-
-        response = self.client.post(
-            reverse('publication-list'),
-            {'title': 'Reviewer upload', 'abstract': 'Abstract', 'pub_type': 'JOURNAL', 'subject_area': 'Computing'},
-            format='json',
-        )
-
-        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
-        self.assertFalse(Publication.objects.filter(title='Reviewer upload').exists())
 
     def test_guest_can_view_approved_publication_inline_without_incrementing_downloads(self):
         owner = User.objects.create_user(username='public-view-owner', password='test-password')
@@ -313,19 +311,15 @@ class PublicationTests(APITestCase):
         self.assertEqual(publication.download_count, 0)
 
     def test_pending_publications_are_visible_only_to_owner_and_reviewer(self):
-        owner = User.objects.create_user(username='pending-owner', password='test-password')
-        reader = User.objects.create_user(username='public-reader', password='test-password')
-        reviewer = User.objects.create_user(username='publication-reviewer', password='test-password')
-        UserProfile.objects.create(user=owner, role='STUDENT', department='Computing')
-        UserProfile.objects.create(user=reader, role='STUDENT', department='Computing')
-        UserProfile.objects.create(user=reviewer, role='REVIEWER', department='Computing')
+        reviewer, reviewer_profile = self.create_supervisor('publication-supervisor')
+        owner, _ = self.create_member('pending-owner', reviewer_profile)
+        reader, _ = self.create_member('public-reader', reviewer_profile)
         approved = Publication.objects.create(
             title='Verified paper', owner=owner, abstract='Public abstract',
             pub_type='JOURNAL', subject_area='Computing', is_approved=True,
         )
-        pending = Publication.objects.create(
-            title='Pending paper', owner=owner, abstract='Private abstract',
-            pub_type='JOURNAL', subject_area='Computing',
+        pending = self.create_review_publication(
+            owner, reviewer, title='Pending paper', abstract='Private abstract',
         )
 
         self.client.force_authenticate(user=reader)
@@ -344,70 +338,151 @@ class PublicationTests(APITestCase):
         reviewer_results = self.client.get(reverse('publication-list'), {'search': 'paper'})
         self.assertEqual({item['id'] for item in reviewer_results.data}, {approved.id, pending.id})
 
-    def test_only_non_owner_reviewer_can_approve_pending_publication(self):
-        owner = User.objects.create_user(username='approval-owner', password='test-password')
-        reader = User.objects.create_user(username='approval-reader', password='test-password')
-        reviewer = User.objects.create_user(username='approval-reviewer', password='test-password')
-        UserProfile.objects.create(user=owner, role='STUDENT', department='Computing')
-        UserProfile.objects.create(user=reader, role='LECTURER', department='Computing')
-        UserProfile.objects.create(user=reviewer, role='REVIEWER', department='Computing')
-        publication = Publication.objects.create(
-            title='Approval paper', owner=owner, abstract='Abstract',
-            pub_type='JOURNAL', subject_area='Computing',
-        )
-
+    def test_reviewers_accept_independently_and_all_accepted_reviews_are_required(self):
+        supervisor, _ = self.create_supervisor('approval-supervisor')
+        co_supervisor, _ = self.create_supervisor('approval-co-supervisor')
+        owner, _ = self.create_member('approval-owner')
+        reader, _ = self.create_member('approval-reader', role='LECTURER')
         self.client.force_authenticate(user=owner)
-        self.assertEqual(self.client.post(reverse('publication-approve', args=[publication.id])).status_code, status.HTTP_403_FORBIDDEN)
-        self.client.force_authenticate(user=reader)
-        self.assertEqual(self.client.post(reverse('publication-approve', args=[publication.id])).status_code, status.HTTP_404_NOT_FOUND)
-        self.client.force_authenticate(user=reviewer)
-        approved = self.client.post(reverse('publication-approve', args=[publication.id]))
-        self.assertEqual(approved.status_code, status.HTTP_200_OK, approved.data)
-        publication.refresh_from_db()
-        self.assertTrue(publication.is_approved)
-
-    def test_reviewer_rejection_requires_reason_and_owner_can_resubmit(self):
-        owner = User.objects.create_user(username='rejection-owner', password='test-password')
-        reviewer = User.objects.create_user(username='rejection-reviewer', password='test-password')
-        UserProfile.objects.create(user=owner, role='STUDENT', department='Computing')
-        UserProfile.objects.create(user=reviewer, role='REVIEWER', department='Computing')
-        publication = Publication.objects.create(
-            title='Rejection test paper', owner=owner, abstract='Initial abstract',
-            pub_type='JOURNAL', subject_area='Computing',
-        )
-
-        self.client.force_authenticate(user=reviewer)
-        missing_reason = self.client.post(reverse('publication-reject', args=[publication.id]), {'reason': '  '}, format='json')
-        self.assertEqual(missing_reason.status_code, status.HTTP_400_BAD_REQUEST)
-        rejected = self.client.post(
-            reverse('publication-reject', args=[publication.id]),
-            {'reason': 'Please add a clearer methodology section.'},
+        response = self.client.post(
+            reverse('publication-list'),
+            {
+                'title': 'Approval paper',
+                'abstract': 'Abstract',
+                'pub_type': 'JOURNAL',
+                'subject_area': 'Computing',
+                'supervisor': supervisor.id,
+                'co_supervisor': co_supervisor.id,
+            },
             format='json',
         )
-        self.assertEqual(rejected.status_code, status.HTTP_200_OK, rejected.data)
-        self.assertEqual(rejected.data['review_status'], 'REJECTED')
-        self.assertEqual(rejected.data['rejection_reason'], 'Please add a clearer methodology section.')
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED, response.data)
+        publication_id = response.data['id']
+
+        self.client.force_authenticate(user=reader)
+        denied = self.client.post(
+            reverse('publication-review-invitation', args=[publication_id]),
+            {'decision': 'ACCEPTED'},
+            format='json',
+        )
+        self.assertEqual(denied.status_code, status.HTTP_404_NOT_FOUND)
+
+        self.client.force_authenticate(user=supervisor)
+        self.assertEqual(self.client.post(
+            reverse('publication-review-invitation', args=[publication_id]),
+            {'decision': 'ACCEPTED'}, format='json',
+        ).status_code, status.HTTP_200_OK)
+        self.client.force_authenticate(user=co_supervisor)
+        accepted = self.client.post(
+            reverse('publication-review-invitation', args=[publication_id]),
+            {'decision': 'ACCEPTED'}, format='json',
+        )
+        self.assertEqual(accepted.status_code, status.HTTP_200_OK, accepted.data)
+        approved = self.client.post(
+            reverse('publication-review-decision', args=[publication_id]),
+            {'decision': 'APPROVED'}, format='json',
+        )
+        self.assertEqual(approved.status_code, status.HTTP_200_OK, approved.data)
+        self.assertFalse(approved.data['is_approved'])
+
+        self.client.force_authenticate(user=supervisor)
+        approved = self.client.post(
+            reverse('publication-review-decision', args=[publication_id]),
+            {'decision': 'APPROVED'}, format='json',
+        )
+        self.assertEqual(approved.status_code, status.HTTP_200_OK, approved.data)
+        self.assertTrue(approved.data['is_approved'])
+        self.assertTrue(UserNotification.objects.filter(user=owner, title__startswith='Publication approved').exists())
+
+    def test_reviewers_can_request_revisions_then_owner_resubmits(self):
+        reviewer, _ = self.create_supervisor('revision-supervisor')
+        owner, _ = self.create_member('revision-owner')
+        self.client.force_authenticate(user=owner)
+        response = self.client.post(
+            reverse('publication-list'),
+            {
+                'title': 'Revision test paper',
+                'abstract': 'Initial abstract',
+                'pub_type': 'JOURNAL',
+                'subject_area': 'Computing',
+                'supervisor': reviewer.id,
+            },
+            format='json',
+        )
+        publication_id = response.data['id']
+        self.client.force_authenticate(user=reviewer)
+        self.client.post(reverse('publication-review-invitation', args=[publication_id]), {'decision': 'ACCEPTED'}, format='json')
+        missing_reason = self.client.post(
+            reverse('publication-review-decision', args=[publication_id]),
+            {'decision': 'REVISION_REQUESTED', 'feedback': '  '}, format='json',
+        )
+        self.assertEqual(missing_reason.status_code, status.HTTP_400_BAD_REQUEST)
+        revision_request = self.client.post(
+            reverse('publication-review-decision', args=[publication_id]),
+            {'decision': 'REVISION_REQUESTED', 'feedback': 'Please add a clearer methodology section.'},
+            format='json',
+        )
+        self.assertEqual(revision_request.status_code, status.HTTP_200_OK, revision_request.data)
+        self.assertEqual(revision_request.data['review_status'], 'REVISION_REQUESTED')
 
         self.client.force_authenticate(user=owner)
-        owner_record = self.client.get(reverse('publication-detail', args=[publication.id]))
-        self.assertEqual(owner_record.data['rejection_reason'], 'Please add a clearer methodology section.')
-        self.client.patch(
-            reverse('publication-detail', args=[publication.id]),
+        updated = self.client.patch(
+            reverse('publication-detail', args=[publication_id]),
             {'abstract': 'Revised abstract'},
             format='json',
         )
-        publication.refresh_from_db()
+        self.assertEqual(updated.status_code, status.HTTP_200_OK, updated.data)
+        publication = Publication.objects.get(pk=publication_id)
         self.assertEqual(publication.review_status, 'PENDING')
-        self.assertEqual(publication.rejection_reason, '')
+        self.assertEqual(publication.review_feedback, '')
+        invitation = publication.review_invitations.get(reviewer=reviewer)
+        self.assertEqual(invitation.decision, 'PENDING')
+
+    def test_owner_can_clear_optional_co_supervisor(self):
+        supervisor, _ = self.create_supervisor('primary-supervisor')
+        co_supervisor, _ = self.create_supervisor('optional-co-supervisor')
+        owner, _ = self.create_member('co-supervisor-owner')
+        self.client.force_authenticate(user=owner)
+        created = self.client.post(
+            reverse('publication-list'),
+            {
+                'title': 'Optional co-supervisor test',
+                'abstract': 'Abstract',
+                'pub_type': 'JOURNAL',
+                'subject_area': 'Computing',
+                'supervisor': supervisor.id,
+                'co_supervisor': co_supervisor.id,
+            },
+            format='json',
+        )
+        self.assertEqual(created.status_code, status.HTTP_201_CREATED, created.data)
+
+        updated = self.client.put(
+            reverse('publication-detail', args=[created.data['id']]),
+            {
+                'title': 'Optional co-supervisor test',
+                'abstract': 'Updated abstract',
+                'pub_type': 'JOURNAL',
+                'subject_area': 'Computing',
+                'supervisor': str(supervisor.id),
+                'co_supervisor': '',
+            },
+            format='multipart',
+        )
+
+        self.assertEqual(updated.status_code, status.HTTP_200_OK, updated.data)
+        self.assertIsNone(updated.data['co_supervisor_id'])
+        self.assertFalse(PublicationReviewInvitation.objects.filter(
+            publication_id=created.data['id'],
+            role='CO_SUPERVISOR',
+        ).exists())
 
     def test_only_owner_or_reviewer_can_download_pending_publication(self):
-        owner = User.objects.create_user(username='download-owner', password='test-password')
-        reader = User.objects.create_user(username='download-reader', password='test-password')
-        UserProfile.objects.create(user=owner, role='STUDENT', department='Computing')
-        UserProfile.objects.create(user=reader, role='STUDENT', department='Computing')
-        publication = Publication.objects.create(
-            title='Download pending paper', owner=owner, abstract='Abstract',
-            pub_type='JOURNAL', subject_area='Computing',
+        reviewer, reviewer_profile = self.create_supervisor('download-supervisor')
+        owner, _ = self.create_member('download-owner', reviewer_profile)
+        reader, _ = self.create_member('download-reader', reviewer_profile)
+        publication = self.create_review_publication(
+            owner, reviewer, title='Download pending paper', abstract='Abstract',
             file_attachment=SimpleUploadedFile('pending.pdf', b'%PDF-1.4 test', content_type='application/pdf'),
         )
 
@@ -420,14 +495,13 @@ class PublicationTests(APITestCase):
         self.assertEqual(b''.join(download.streaming_content), b'%PDF-1.4 test')
 
     def test_only_owner_can_request_publication_deletion(self):
-        owner = User.objects.create_user(username='deletion-owner', password='test-password')
-        other_user = User.objects.create_user(username='deletion-other', password='test-password')
-        UserProfile.objects.create(user=owner, role='STUDENT', department='Computing')
-        UserProfile.objects.create(user=other_user, role='STUDENT', department='Computing')
+        _, supervisor = self.create_supervisor('deletion-supervisor')
+        owner, _ = self.create_member('deletion-owner', supervisor)
+        other_user, _ = self.create_member('deletion-other', supervisor)
         self.client.force_authenticate(user=owner)
         create_response = self.client.post(
             reverse('publication-list'),
-            {'title': 'Delete request paper', 'abstract': 'Abstract', 'pub_type': 'JOURNAL', 'subject_area': 'Computing'},
+            {'title': 'Delete request paper', 'abstract': 'Abstract', 'pub_type': 'JOURNAL', 'subject_area': 'Computing', 'supervisor': supervisor.user_id},
             format='json',
         )
         publication_id = create_response.data['id']
@@ -469,7 +543,8 @@ class PublicationTests(APITestCase):
         self.assertEqual(search_response.data[0]['name'], 'Ada Researcher')
 
     def test_publication_can_be_created_with_selected_authors(self):
-        user = User.objects.create_user(username='multi-author-owner', password='test-password')
+        _, supervisor = self.create_supervisor('author-publication-supervisor')
+        user, _ = self.create_member('multi-author-owner', supervisor)
         self.client.force_authenticate(user=user)
         author = AuthorProfile.objects.create(first_name='Grace', last_name='Hopper')
 
@@ -481,6 +556,7 @@ class PublicationTests(APITestCase):
                 'pub_type': 'JOURNAL',
                 'subject_area': 'Computing',
                 'authors': [author.id],
+                'supervisor': supervisor.user_id,
             },
             format='json',
         )
@@ -490,8 +566,8 @@ class PublicationTests(APITestCase):
         self.assertEqual(list(publication.authors.all()), [author])
 
     def test_login_access_token_authorizes_publication_upload(self):
-        user = User.objects.create_user(username='token-student', password='test-password')
-        UserProfile.objects.create(user=user, role='STUDENT', department='Computing')
+        reviewer, supervisor = self.create_supervisor('token-supervisor')
+        user, _ = self.create_member('token-student', supervisor)
         token_response = self.client.post(
             reverse('token_obtain_pair'),
             {'username': 'token-student', 'password': 'test-password'},
@@ -507,6 +583,7 @@ class PublicationTests(APITestCase):
                 'abstract': 'Testing token authentication for uploads.',
                 'pub_type': 'JOURNAL',
                 'subject_area': 'Computer Science',
+                'supervisor': reviewer.id,
                 'file_attachment': SimpleUploadedFile('jwt-paper.pdf', b'%PDF-1.4 test', content_type='application/pdf'),
             },
             format='multipart',
@@ -515,8 +592,8 @@ class PublicationTests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_201_CREATED, response.data)
 
     def test_authenticated_user_can_upload_publication_without_authors_field(self):
-        user = User.objects.create_user(username='student', password='test-password')
-        UserProfile.objects.create(user=user, role='STUDENT', department='Computing')
+        reviewer, supervisor = self.create_supervisor('upload-supervisor')
+        user, _ = self.create_member('student', supervisor)
         self.client.force_authenticate(user=user)
 
         response = self.client.post(
@@ -526,6 +603,7 @@ class PublicationTests(APITestCase):
                 'abstract': 'Testing the upload endpoint.',
                 'pub_type': 'JOURNAL',
                 'subject_area': 'Computer Science',
+                'supervisor': reviewer.id,
                 'file_attachment': SimpleUploadedFile('paper.pdf', b'%PDF-1.4 test', content_type='application/pdf'),
             },
             format='multipart',
@@ -537,8 +615,8 @@ class PublicationTests(APITestCase):
         self.assertEqual(publication.authors.count(), 1)
 
     def test_create_publication(self):
-        user = User.objects.create_user(username='publication-author', password='test-password')
-        UserProfile.objects.create(user=user, role='STUDENT', department='Computing')
+        reviewer, supervisor = self.create_supervisor('publication-supervisor')
+        user, _ = self.create_member('publication-author', supervisor)
         self.client.force_authenticate(user=user)
         url = reverse('publication-list') # matches router endpoint
         data = {
@@ -546,6 +624,7 @@ class PublicationTests(APITestCase):
             'abstract': 'This paper explores local server infrastructure...',
             'pub_type': 'JOURNAL',
             'subject_area': 'Computer Science',
+            'supervisor': reviewer.id,
             'authors': []
         }
         response = self.client.post(url, data, format='json')

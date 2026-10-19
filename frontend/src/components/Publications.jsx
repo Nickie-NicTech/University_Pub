@@ -13,7 +13,7 @@ export default function Publications({ user }) {
     const [editingId, setEditingId] = useState(null);
     const [showSubmissionForm, setShowSubmissionForm] = useState(false);
     const [rejectingId, setRejectingId] = useState(null);
-    const [rejectionReason, setRejectionReason] = useState('');
+    const [reviewFeedback, setReviewFeedback] = useState('');
     
     // Core Form Hooks
     const [title, setTitle] = useState('');
@@ -38,6 +38,11 @@ export default function Publications({ user }) {
     const [authorLoading, setAuthorLoading] = useState(false);
     const [authorWorksError, setAuthorWorksError] = useState('');
     const [publicationSaving, setPublicationSaving] = useState(false);
+    const [supervisors, setSupervisors] = useState([]);
+    const [supervisorLoading, setSupervisorLoading] = useState(true);
+    const [supervisorError, setSupervisorError] = useState('');
+    const [supervisorId, setSupervisorId] = useState('');
+    const [coSupervisorId, setCoSupervisorId] = useState('');
 
     // Restrictions configuration boundary parameters
     const canWrite = user && ['STUDENT', 'LECTURER'].includes(user.role);
@@ -69,6 +74,8 @@ export default function Publications({ user }) {
         setSubject('');
         setFile(null);
         setSelectedAuthors([]);
+        setSupervisorId('');
+        setCoSupervisorId('');
     };
 
     useEffect(() => {
@@ -87,6 +94,25 @@ export default function Publications({ user }) {
             });
         return () => { isCurrentRequest = false; };
     }, [fetchPublications]);
+
+    useEffect(() => {
+        if (!canWrite) return;
+        let isCurrentRequest = true;
+        API.get('users/supervisors/')
+            .then(({ data }) => {
+                if (!isCurrentRequest) return;
+                setSupervisors(Array.isArray(data) ? data : []);
+            })
+            .catch((err) => {
+                if (!isCurrentRequest) return;
+                console.error('Unable to load lecturer supervisors:', err);
+                setSupervisorError(getErrorMessage(err, 'Unable to load the lecturer list.'));
+            })
+            .finally(() => {
+                if (isCurrentRequest) setSupervisorLoading(false);
+            });
+        return () => { isCurrentRequest = false; };
+    }, [canWrite]);
 
     useEffect(() => {
         if (!showAuthorModal) return;
@@ -214,18 +240,21 @@ export default function Publications({ user }) {
         formData.append('abstract', abstract);
         formData.append('pub_type', pubType);
         formData.append('subject_area', subject);
+        formData.append('supervisor', supervisorId);
+        formData.append('co_supervisor', coSupervisorId);
         selectedAuthors.forEach((author) => formData.append('authors', author.id));
         if (file) formData.append('file_attachment', file);
 
         try {
+            let response;
             if (editingId) {
-                await API.put(`publications/${editingId}/`, formData);
+                response = await API.put(`publications/${editingId}/`, formData);
             } else {
-                await API.post('publications/', formData);
+                response = await API.post('publications/', formData);
             }
             setActionFeedback({
                 type: 'success',
-                message: editingId ? 'Publication changes saved successfully.' : 'Publication submitted successfully and is pending review.',
+                message: `${editingId ? 'Publication changes saved successfully and resubmitted for review.' : 'Publication submitted successfully and is pending review.'}${response.data.notification_warning ? ` ${response.data.notification_warning}` : ''}`,
             });
             clearForm();
             setShowSubmissionForm(false);
@@ -242,8 +271,11 @@ export default function Publications({ user }) {
         setPendingAction(`approve-${id}`);
         setActionFeedback(null);
         try {
-            await API.post(`publications/${id}/approve/`);
-            setActionFeedback({ type: 'success', message: 'Publication approved successfully.' });
+            const { data } = await API.post(`publications/${id}/review-decision/`, { decision: 'APPROVED' });
+            setActionFeedback({
+                type: 'success',
+                message: `${data.review_status === 'APPROVED' ? 'All accepting reviewers approved this publication.' : 'Your approval was recorded; the publication is waiting for remaining reviewers.'}${data.notification_warning ? ` ${data.notification_warning}` : ''}`,
+            });
             await refreshPublications();
         } catch (err) {
             console.error('Unable to approve publication:', err);
@@ -253,19 +285,40 @@ export default function Publications({ user }) {
         }
     };
 
-    const rejectPublication = async (event, id) => {
+    const requestRevisions = async (event, id) => {
         event.preventDefault();
-        setPendingAction(`reject-${id}`);
+        setPendingAction(`revisions-${id}`);
         setActionFeedback(null);
         try {
-            await API.post(`publications/${id}/reject/`, { reason: rejectionReason });
+            const { data } = await API.post(`publications/${id}/review-decision/`, { decision: 'REVISION_REQUESTED', feedback: reviewFeedback });
             setRejectingId(null);
-            setRejectionReason('');
-            setActionFeedback({ type: 'success', message: 'Publication rejected. The owner can now see your feedback.' });
+            setReviewFeedback('');
+            setActionFeedback({
+                type: 'success',
+                message: `Revision feedback sent to the submitter.${data.notification_warning ? ` ${data.notification_warning}` : ''}`,
+            });
             await refreshPublications();
         } catch (err) {
-            console.error('Unable to reject publication:', err);
-            setActionFeedback({ type: 'error', message: getErrorMessage(err, 'Unable to reject this publication.') });
+            console.error('Unable to request publication revisions:', err);
+            setActionFeedback({ type: 'error', message: getErrorMessage(err, 'Unable to send revision feedback.') });
+        } finally {
+            setPendingAction('');
+        }
+    };
+
+    const respondToInvitation = async (publicationId, decision) => {
+        setPendingAction(`${decision.toLowerCase()}-${publicationId}`);
+        setActionFeedback(null);
+        try {
+            const { data } = await API.post(`publications/${publicationId}/review-invitation/`, { decision });
+            setActionFeedback({
+                type: 'success',
+                message: `Review invitation ${decision.toLowerCase()}.${data.notification_warning ? ` ${data.notification_warning}` : ''}`,
+            });
+            await refreshPublications();
+        } catch (err) {
+            console.error('Unable to respond to review invitation:', err);
+            setActionFeedback({ type: 'error', message: getErrorMessage(err, 'Unable to respond to this review invitation.') });
         } finally {
             setPendingAction('');
         }
@@ -437,8 +490,14 @@ export default function Publications({ user }) {
                                 
                                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderTop: '1px solid #f1f5f9', paddingTop: '12px' }}>
                                     <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
-                                        <span style={{ fontSize: '0.825rem', fontWeight: 600, padding: '4px 8px', borderRadius: '9999px', backgroundColor: pub.review_status === 'APPROVED' || pub.is_approved ? '#dcfce7' : pub.review_status === 'REJECTED' ? '#fee2e2' : '#ffedd5', color: pub.review_status === 'APPROVED' || pub.is_approved ? '#15803d' : pub.review_status === 'REJECTED' ? '#b91c1c' : '#c2410c' }}>
-                                            ● {pub.review_status === 'REJECTED' ? 'Rejected' : pub.review_status === 'APPROVED' || pub.is_approved ? 'Verified Document' : 'Pending Verification'}
+                                        <span style={{ fontSize: '0.825rem', fontWeight: 600, padding: '4px 8px', borderRadius: '9999px', backgroundColor: pub.is_approved ? '#dcfce7' : pub.review_status === 'REVISION_REQUESTED' ? '#ffedd5' : '#ffedd5', color: pub.is_approved ? '#15803d' : pub.review_status === 'REVISION_REQUESTED' ? '#9a3412' : '#c2410c' }}>
+                                            ● {({
+                                                PENDING_INVITATIONS: 'Waiting for reviewer responses',
+                                                PENDING: 'Pending review',
+                                                REVIEWER_DECLINED: 'Reviewers declined — choose again',
+                                                REVISION_REQUESTED: 'Revisions requested',
+                                                APPROVED: 'Approved',
+                                            })[pub.review_status] || 'Pending review'}
                                         </span>
                                         {pub.file_attachment && (
                                             <button type="button" onClick={() => downloadPublication(pub)} disabled={downloadingPublicationId === pub.id} style={{ padding: 0, border: 0, background: 'none', color: '#0284c7', textDecoration: 'none', fontWeight: 500, fontSize: '0.875rem', display: 'inline-flex', alignItems: 'center', gap: '5px', cursor: downloadingPublicationId === pub.id ? 'wait' : 'pointer' }} title={`Download manuscript (${pub.download_count || 0} downloads)`}>
@@ -447,15 +506,22 @@ export default function Publications({ user }) {
                                         )}
                                     </div>
 
-                                    {(pub.is_owner || user?.role === 'REVIEWER') && (
+                                    {(pub.is_owner || pub.is_reviewer || pub.is_invited_reviewer) && (
+                                        <>
                                         <div style={{ display: 'flex', gap: '8px' }}>
-                                            {user?.role === 'REVIEWER' && pub.review_status === 'PENDING' && !pub.is_owner && (
+                                            {pub.is_invited_reviewer && pub.review_status === 'PENDING_INVITATIONS' && (
+                                                <>
+                                                    <button type="button" disabled={pendingAction === `accepted-${pub.id}`} onClick={() => respondToInvitation(pub.id, 'ACCEPTED')} style={{ ...iconButtonStyle, width: 'auto', padding: '0 10px', color: '#15803d' }}>{pendingAction === `accepted-${pub.id}` ? <LoaderCircle size={15} className="publication-spinner" /> : <Check size={15} />} Accept review</button>
+                                                    <button type="button" disabled={pendingAction === `declined-${pub.id}`} onClick={() => respondToInvitation(pub.id, 'DECLINED')} style={{ ...iconButtonStyle, width: 'auto', padding: '0 10px', color: '#b91c1c' }}>{pendingAction === `declined-${pub.id}` ? <LoaderCircle size={15} className="publication-spinner" /> : <X size={15} />} Decline</button>
+                                                </>
+                                            )}
+                                            {pub.is_reviewer && pub.review_status === 'PENDING' && pub.my_review_decision === 'PENDING' && (
                                                 <>
                                                     <button type="button" title="Approve publication" aria-label="Approve publication" disabled={pendingAction === `approve-${pub.id}`} onClick={() => approvePublication(pub.id)} style={{ ...iconButtonStyle, cursor: pendingAction === `approve-${pub.id}` ? 'wait' : 'pointer' }}>
                                                         {pendingAction === `approve-${pub.id}` ? <LoaderCircle size={17} className="publication-spinner" aria-hidden="true" /> : <ShieldCheck size={17} aria-hidden="true" />}
                                                     </button>
-                                                    <button type="button" title="Reject publication" onClick={() => { setRejectingId(pub.id); setRejectionReason(''); setActionFeedback(null); }} style={{ ...iconButtonStyle, color: '#b91c1c' }}>
-                                                        <X size={17} aria-hidden="true" /><span style={{ fontSize: '0.75rem' }}>Reject</span>
+                                                    <button type="button" title="Request revisions" onClick={() => { setRejectingId(pub.id); setReviewFeedback(''); setActionFeedback(null); }} style={{ ...iconButtonStyle, color: '#b45309' }}>
+                                                        <Pencil size={17} aria-hidden="true" /><span style={{ fontSize: '0.75rem' }}>Request revisions</span>
                                                     </button>
                                                 </>
                                             )}
@@ -468,26 +534,40 @@ export default function Publications({ user }) {
                                                         setPubType(pub.pub_type);
                                                         setSubject(pub.subject_area);
                                                         setSelectedAuthors(pub.authors_details || []);
+                                                        setSupervisorId(pub.supervisor_id ? String(pub.supervisor_id) : '');
+                                                        setCoSupervisorId(pub.co_supervisor_id ? String(pub.co_supervisor_id) : '');
                                                         setShowSubmissionForm(true);
                                                     }} style={iconButtonStyle}><Pencil size={17} aria-hidden="true" /></button>
                                                     <button type="button" title="Request publication deletion" aria-label="Request publication deletion" disabled={pendingAction === `delete-${pub.id}`} onClick={() => handleDeletionRequest(pub)} style={{ ...iconButtonStyle, color: '#b91c1c', cursor: pendingAction === `delete-${pub.id}` ? 'wait' : 'pointer' }}>{pendingAction === `delete-${pub.id}` ? <LoaderCircle size={17} className="publication-spinner" aria-hidden="true" /> : <Trash2 size={17} aria-hidden="true" />}</button>
                                                 </>
                                             )}
                                         </div>
+                                        {pub.review_invitations?.length > 0 && (
+                                            <div style={{ marginTop: '10px', color: '#475569', fontSize: '0.82rem' }}>
+                                                <strong>Reviewers:</strong>
+                                                {pub.review_invitations.map((invitation) => (
+                                                    <div key={invitation.id} style={{ marginTop: '4px' }}>
+                                                        {invitation.reviewer_name} ({invitation.role === 'CO_SUPERVISOR' ? 'co-supervisor' : 'supervisor'}: {invitation.status.toLowerCase().replace('_', ' ')}{invitation.status === 'ACCEPTED' ? `, ${invitation.decision.toLowerCase().replace('_', ' ')}` : ''})
+                                                        {invitation.feedback && <div style={{ margin: '3px 0 5px 8px', whiteSpace: 'pre-wrap' }}>Feedback: {invitation.feedback}</div>}
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        )}
+                                        </>
                                     )}
                                 </div>
-                                {pub.is_owner && pub.review_status === 'REJECTED' && pub.rejection_reason && (
+                                {pub.is_owner && pub.review_feedback && (
                                     <div role="note" style={{ marginTop: '12px', padding: '11px 13px', borderLeft: '3px solid #c2410c', background: '#fff7ed', color: '#7c2d12', fontSize: '0.84rem', lineHeight: 1.5 }}>
-                                        <strong>Reviewer feedback:</strong> {pub.rejection_reason}
+                                        <strong>Supervisor feedback:</strong> {pub.review_feedback}
                                     </div>
                                 )}
                                 {rejectingId === pub.id && (
-                                    <form onSubmit={(event) => rejectPublication(event, pub.id)} style={{ display: 'grid', gap: '8px', marginTop: '12px', padding: '12px', border: '1px solid #fecaca', borderRadius: '5px', background: '#fffafa' }}>
-                                        <label htmlFor={`rejection-reason-${pub.id}`} style={{ color: '#7f1d1d', fontSize: '0.82rem', fontWeight: 700 }}>Reason for rejection (required)</label>
-                                        <textarea id={`rejection-reason-${pub.id}`} value={rejectionReason} onChange={(event) => setRejectionReason(event.target.value)} minLength={5} required rows={3} placeholder="Explain what needs to change before this can be published." style={{ width: '100%', padding: '9px', boxSizing: 'border-box', border: '1px solid #fca5a5', borderRadius: '4px', font: 'inherit', resize: 'vertical' }} />
+                                    <form onSubmit={(event) => requestRevisions(event, pub.id)} style={{ display: 'grid', gap: '8px', marginTop: '12px', padding: '12px', border: '1px solid #fed7aa', borderRadius: '5px', background: '#fffaf5' }}>
+                                        <label htmlFor={`review-feedback-${pub.id}`} style={{ color: '#7c2d12', fontSize: '0.82rem', fontWeight: 700 }}>Feedback and requested revisions (required)</label>
+                                        <textarea id={`review-feedback-${pub.id}`} value={reviewFeedback} onChange={(event) => setReviewFeedback(event.target.value)} minLength={5} required rows={3} placeholder="Explain what should be revised before approving this publication." style={{ width: '100%', padding: '9px', boxSizing: 'border-box', border: '1px solid #fdba74', borderRadius: '4px', font: 'inherit', resize: 'vertical' }} />
                                         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
                                             <button type="button" onClick={() => setRejectingId(null)} style={{ ...iconButtonStyle, width: 'auto', padding: '0 10px' }}>Cancel</button>
-                                            <button type="submit" disabled={rejectionReason.trim().length < 5 || pendingAction === `reject-${pub.id}`} style={{ ...iconButtonStyle, width: 'auto', padding: '0 10px', color: '#fff', background: '#b91c1c', borderColor: '#b91c1c' }}>{pendingAction === `reject-${pub.id}` && <LoaderCircle size={15} className="publication-spinner" aria-hidden="true" />}{pendingAction === `reject-${pub.id}` ? 'Rejecting…' : 'Reject publication'}</button>
+                                            <button type="submit" disabled={reviewFeedback.trim().length < 5 || pendingAction === `revisions-${pub.id}`} style={{ ...iconButtonStyle, width: 'auto', padding: '0 10px', color: '#fff', background: '#b45309', borderColor: '#b45309' }}>{pendingAction === `revisions-${pub.id}` && <LoaderCircle size={15} className="publication-spinner" aria-hidden="true" />}{pendingAction === `revisions-${pub.id}` ? 'Sending feedback…' : 'Request revisions'}</button>
                                         </div>
                                     </form>
                                 )}
@@ -516,6 +596,28 @@ export default function Publications({ user }) {
                             </button>
                         </div>
                         {selectedAuthors.length > 0 && <p style={{ margin: '-8px 0 0', color: '#475569', fontSize: '0.8rem' }}>Authors: {selectedAuthors.map((author) => author.name || `${author.first_name} ${author.last_name}`).join('; ')}</p>}
+                        <div>
+                            <label htmlFor="publication-reviewer" style={labelStyle}>Lecturer supervisor (required)</label>
+                            {supervisorLoading ? (
+                                <p role="status" style={{ color: '#64748b', fontSize: '0.85rem' }}><LoaderCircle size={15} className="publication-spinner" aria-hidden="true" /> Loading supervisor…</p>
+                            ) : supervisorError ? (
+                                <p role="alert" style={{ color: '#b91c1c', fontSize: '0.85rem' }}>{supervisorError}</p>
+                            ) : supervisors.length > 0 ? (
+                                <>
+                                <select id="publication-reviewer" value={supervisorId} onChange={(event) => setSupervisorId(event.target.value)} required style={formInputStyle}>
+                                    <option value="">Select a lecturer supervisor</option>
+                                    {supervisors.map((lecturer) => <option key={lecturer.user_id} value={lecturer.user_id}>{lecturer.name} — {lecturer.department}</option>)}
+                                </select>
+                                <label htmlFor="publication-co-supervisor" style={{ ...labelStyle, marginTop: '10px' }}>Co-supervisor (optional)</label>
+                                <select id="publication-co-supervisor" value={coSupervisorId} onChange={(event) => setCoSupervisorId(event.target.value)} style={formInputStyle}>
+                                    <option value="">No co-supervisor</option>
+                                    {supervisors.filter((lecturer) => String(lecturer.user_id) !== supervisorId).map((lecturer) => <option key={lecturer.user_id} value={lecturer.user_id}>{lecturer.name} — {lecturer.department}</option>)}
+                                </select>
+                                </>
+                            ) : (
+                                <p role="alert" style={{ color: '#b91c1c', fontSize: '0.85rem' }}>No active lecturers are available to review this publication.</p>
+                            )}
+                        </div>
                         <div><label htmlFor="publication-subject" style={labelStyle}>Subject Area (required)</label><input id="publication-subject" type="text" value={subject} onChange={e => setSubject(e.target.value)} required style={formInputStyle}/></div>
                         <div>
                             <label htmlFor="publication-abstract" style={labelStyle}>Abstract Description (required)</label>

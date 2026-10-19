@@ -5,7 +5,6 @@ class UserProfile(models.Model):
     ROLE_CHOICES = [
         ('STUDENT', 'Student'),
         ('LECTURER', 'Lecturer'),
-        ('REVIEWER', 'Reviewer'),
         ('ADMIN', 'Administrator'),
     ]
 
@@ -13,7 +12,6 @@ class UserProfile(models.Model):
     role = models.CharField(max_length=20, choices=ROLE_CHOICES, default='STUDENT')
     department = models.CharField(max_length=100)
     profile_picture = models.FileField(upload_to='profiles/', blank=True, null=True)
-
     def __str__(self):
         return f"{self.user.username} ({self.role})"
 
@@ -57,9 +55,11 @@ class AuthorProfile(models.Model):
 
 class Publication(models.Model):
     REVIEW_STATUS_CHOICES = [
+        ('PENDING_INVITATIONS', 'Waiting for invited reviewers'),
         ('PENDING', 'Pending review'),
+        ('REVIEWER_DECLINED', 'All invited reviewers declined'),
+        ('REVISION_REQUESTED', 'Revisions requested'),
         ('APPROVED', 'Approved'),
-        ('REJECTED', 'Rejected'),
     ]
 
     PUBLICATION_TYPES = [
@@ -79,19 +79,77 @@ class Publication(models.Model):
     download_count = models.PositiveIntegerField(default=0)
     upload_date = models.DateTimeField(auto_now_add=True)
     is_approved = models.BooleanField(default=False) # For the verification milestone
-    review_status = models.CharField(max_length=20, choices=REVIEW_STATUS_CHOICES, default='PENDING')
-    rejection_reason = models.TextField(blank=True)
+    review_status = models.CharField(max_length=20, choices=REVIEW_STATUS_CHOICES, default='PENDING_INVITATIONS')
+    review_feedback = models.TextField(blank=True)
 
     def save(self, *args, **kwargs):
         if self.is_approved:
             self.review_status = 'APPROVED'
-            self.rejection_reason = ''
+            self.review_feedback = ''
         elif self.review_status == 'APPROVED':
             self.review_status = 'PENDING'
         super().save(*args, **kwargs)
 
     def __str__(self):
         return self.title
+
+
+class PublicationReviewInvitation(models.Model):
+    ROLE_CHOICES = [
+        ('SUPERVISOR', 'Supervisor'),
+        ('CO_SUPERVISOR', 'Co-supervisor'),
+    ]
+    STATUS_CHOICES = [
+        ('INVITED', 'Invitation pending'),
+        ('ACCEPTED', 'Accepted'),
+        ('DECLINED', 'Declined'),
+    ]
+    DECISION_CHOICES = [
+        ('PENDING', 'Review pending'),
+        ('APPROVED', 'Approved'),
+        ('REVISION_REQUESTED', 'Revisions requested'),
+    ]
+
+    publication = models.ForeignKey(
+        Publication,
+        on_delete=models.CASCADE,
+        related_name='review_invitations',
+    )
+    reviewer = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name='publication_review_invitations',
+    )
+    role = models.CharField(max_length=20, choices=ROLE_CHOICES)
+    status = models.CharField(max_length=10, choices=STATUS_CHOICES, default='INVITED')
+    decision = models.CharField(max_length=20, choices=DECISION_CHOICES, default='PENDING')
+    feedback = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    responded_at = models.DateTimeField(blank=True, null=True)
+
+    class Meta:
+        ordering = ['created_at', 'pk']
+        constraints = [
+            models.UniqueConstraint(
+                fields=['publication', 'reviewer'],
+                name='unique_publication_reviewer_invitation',
+            ),
+            models.UniqueConstraint(
+                fields=['publication', 'role'],
+                name='unique_publication_reviewer_role',
+            ),
+        ]
+
+
+class UserNotification(models.Model):
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='notifications')
+    title = models.CharField(max_length=200)
+    message = models.TextField()
+    created_at = models.DateTimeField(auto_now_add=True)
+    read_at = models.DateTimeField(blank=True, null=True)
+
+    class Meta:
+        ordering = ['-created_at']
 
 
 class PublicationDeletionRequest(models.Model):
@@ -108,25 +166,6 @@ class PublicationDeletionRequest(models.Model):
         return f"Deletion request for {self.publication_id} ({self.status})"
 
 
-class ReviewerApplication(models.Model):
-    STATUS_CHOICES = [
-        ('PENDING', 'Pending'),
-        ('APPROVED', 'Approved'),
-        ('REJECTED', 'Rejected'),
-    ]
-
-    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='reviewer_applications')
-    expertise = models.CharField(max_length=200)
-    reason = models.TextField()
-    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='PENDING')
-    created_at = models.DateTimeField(auto_now_add=True)
-    reviewed_at = models.DateTimeField(blank=True, null=True)
-    reviewed_by = models.ForeignKey(User, on_delete=models.SET_NULL, blank=True, null=True, related_name='reviewed_applications')
-
-    class Meta:
-        ordering = ['-created_at']
-
-
 class BroadcastMessage(models.Model):
     title = models.CharField(max_length=160)
     message = models.TextField()
@@ -136,4 +175,3 @@ class BroadcastMessage(models.Model):
 
     class Meta:
         ordering = ['-created_at']
-

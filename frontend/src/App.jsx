@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate, Link } from 'react-router-dom';
 import { jwtDecode } from 'jwt-decode';
-import { BookOpen, Library, LogIn, LogOut, ShieldCheck, UserPlus, UserRound } from 'lucide-react';
+import { Bell, BookOpen, Library, LogIn, LogOut, ShieldCheck, UserPlus, UserRound } from 'lucide-react';
 import Login from './components/Login';
 import SignUp from './components/signUp';
 import Publications from './components/Publications';
@@ -12,13 +12,35 @@ import API from './api';
 export default function App() {
   const [token, setToken] = useState(localStorage.getItem('access_token'));
   const decodedUser = token ? jwtDecode(token) : null;
-  const user = decodedUser?.role === 'APPROVER' ? { ...decodedUser, role: 'REVIEWER' } : decodedUser;
+  const user = ['APPROVER', 'REVIEWER'].includes(decodedUser?.role)
+    ? { ...decodedUser, role: 'LECTURER' }
+    : decodedUser;
   const [broadcasts, setBroadcasts] = useState([]);
+  const [notifications, setNotifications] = useState([]);
+  const [notificationsOpen, setNotificationsOpen] = useState(false);
+  const [notificationError, setNotificationError] = useState('');
 
   useEffect(() => {
     if (!token) return;
     API.get('broadcasts/').then(({ data }) => setBroadcasts(data)).catch(() => setBroadcasts([]));
+    API.get('users/notifications/')
+      .then(({ data }) => setNotifications(Array.isArray(data) ? data : []))
+      .catch((error) => {
+        console.error('Unable to load notifications:', error);
+        setNotificationError('Unable to load notifications.');
+      });
   }, [token]);
+
+  const markNotificationRead = async (notification) => {
+    if (notification.read_at) return;
+    try {
+      const { data } = await API.patch(`users/notifications/${notification.id}/read/`);
+      setNotifications((current) => current.map((item) => item.id === data.id ? data : item));
+    } catch (error) {
+      console.error('Unable to mark notification as read:', error);
+      setNotificationError('Unable to mark this notification as read.');
+    }
+  };
 
   const handleLogout = () => {
     localStorage.clear();
@@ -71,6 +93,25 @@ export default function App() {
           <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
             {user ? (
               <>
+                <div style={{ position: 'relative' }}>
+                  <button type="button" onClick={() => setNotificationsOpen((open) => !open)} aria-label={`Notifications${notifications.filter((item) => !item.read_at).length ? `, ${notifications.filter((item) => !item.read_at).length} unread` : ''}`} style={{ position: 'relative', border: 0, background: 'transparent', color: '#f8fafc', cursor: 'pointer', padding: '6px' }}>
+                    <Bell size={19} aria-hidden="true" />
+                    {notifications.some((item) => !item.read_at) && <span style={{ position: 'absolute', top: 2, right: 1, width: 8, height: 8, borderRadius: '50%', background: '#f97316' }} />}
+                  </button>
+                  {notificationsOpen && (
+                    <section aria-label="Notifications" style={{ position: 'absolute', top: '42px', right: 0, zIndex: 30, width: 'min(360px, 85vw)', maxHeight: '420px', overflowY: 'auto', background: '#fff', color: '#1e293b', border: '1px solid #cbd5e1', borderRadius: '8px', boxShadow: '0 12px 24px rgba(15,23,42,.2)', padding: '12px' }}>
+                      <h2 style={{ margin: '2px 4px 10px', fontSize: '1rem' }}>Notifications</h2>
+                      {notificationError && <p role="alert" style={{ margin: '8px 4px', color: '#b91c1c', fontSize: '.82rem' }}>{notificationError}</p>}
+                      {notifications.length === 0 ? <p style={{ margin: '8px 4px', color: '#64748b', fontSize: '.85rem' }}>You have no notifications.</p> : notifications.map((notification) => (
+                        <button key={notification.id} type="button" onClick={() => markNotificationRead(notification)} style={{ display: 'block', width: '100%', textAlign: 'left', border: 0, borderTop: '1px solid #e2e8f0', background: notification.read_at ? '#fff' : '#f0f9ff', padding: '10px 6px', cursor: notification.read_at ? 'default' : 'pointer', color: 'inherit' }}>
+                          <strong style={{ display: 'block', fontSize: '.85rem' }}>{notification.title}</strong>
+                          <span style={{ display: 'block', marginTop: '3px', fontSize: '.8rem', lineHeight: 1.4 }}>{notification.message}</span>
+                          <time style={{ display: 'block', marginTop: '4px', color: '#64748b', fontSize: '.72rem' }}>{new Date(notification.created_at).toLocaleString()}</time>
+                        </button>
+                      ))}
+                    </section>
+                  )}
+                </div>
                 <span style={{ fontSize: '0.875rem', color: '#94a3b8' }}>
                   <UserRound size={15} aria-hidden="true" style={{ verticalAlign: 'middle', marginRight: '5px' }} />
                   Active: <strong style={{ color: '#38bdf8' }}>{user.username || 'User'} ({user.role || 'MEMBER'})</strong>
