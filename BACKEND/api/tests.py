@@ -7,7 +7,7 @@ from django.contrib.auth.models import User
 from django.test import override_settings
 from rest_framework_simplejwt.tokens import AccessToken
 import re
-from .models import AuthorProfile, Publication, PublicationDeletionRequest, UserProfile, UniversityDirectoryEntry, BroadcastMessage
+from .models import AuthorProfile, Publication, PublicationDeletionRequest, UserProfile, UniversityDirectoryEntry, BroadcastMessage, ReviewerSubjectArea
 from .serializers import RepositoryTokenObtainPairSerializer
 
 class TokenClaimsTests(TestCase):
@@ -183,7 +183,12 @@ class PublicationTests(APITestCase):
         )
         self.assertEqual(approved.status_code, status.HTTP_200_OK, approved.data)
         self.assertEqual(UserProfile.objects.get(user=applicant).role, 'REVIEWER')
-
+        self.assertTrue(
+            ReviewerSubjectArea.objects.filter(
+                reviewer=applicant,
+                subject_area='Computer Science'
+            ).exists()
+        )
     def test_admin_user_management_requires_staff(self):
         user = User.objects.create_user(username='ordinary-user', password='test-password')
         self.client.force_authenticate(user=user)
@@ -312,20 +317,22 @@ class PublicationTests(APITestCase):
         publication.refresh_from_db()
         self.assertEqual(publication.download_count, 0)
 
-    def test_pending_publications_are_visible_only_to_owner_and_reviewer(self):
+    def test_pending_publications_are_visible_only_to_owner_and_assigned_reviewer(self):
         owner = User.objects.create_user(username='pending-owner', password='test-password')
         reader = User.objects.create_user(username='public-reader', password='test-password')
         reviewer = User.objects.create_user(username='publication-reviewer', password='test-password')
+        other_reviewer = User.objects.create_user(username='other-publication-reviewer', password='test-password')
         UserProfile.objects.create(user=owner, role='STUDENT', department='Computing')
         UserProfile.objects.create(user=reader, role='STUDENT', department='Computing')
         UserProfile.objects.create(user=reviewer, role='REVIEWER', department='Computing')
+        UserProfile.objects.create(user=other_reviewer, role='REVIEWER', department='Computing')
         approved = Publication.objects.create(
             title='Verified paper', owner=owner, abstract='Public abstract',
             pub_type='JOURNAL', subject_area='Computing', is_approved=True,
         )
         pending = Publication.objects.create(
             title='Pending paper', owner=owner, abstract='Private abstract',
-            pub_type='JOURNAL', subject_area='Computing',
+            pub_type='JOURNAL', subject_area='Computing', assigned_reviewer=reviewer,
         )
 
         self.client.force_authenticate(user=reader)
@@ -344,27 +351,43 @@ class PublicationTests(APITestCase):
         reviewer_results = self.client.get(reverse('publication-list'), {'search': 'paper'})
         self.assertEqual({item['id'] for item in reviewer_results.data}, {approved.id, pending.id})
 
-    def test_only_non_owner_reviewer_can_approve_pending_publication(self):
+        self.client.force_authenticate(user=other_reviewer)
+        other_reviewer_results = self.client.get(reverse('publication-list'), {'search': 'paper'})
+        self.assertEqual({item['id'] for item in other_reviewer_results.data}, {approved.id})
+        self.assertEqual(
+            self.client.get(reverse('publication-detail', args=[pending.id])).status_code,
+            status.HTTP_404_NOT_FOUND
+        )
+    
+    def test_only_assigned_reviewer_can_approve_pending_publication(self):
         owner = User.objects.create_user(username='approval-owner', password='test-password')
         reader = User.objects.create_user(username='approval-reader', password='test-password')
         reviewer = User.objects.create_user(username='approval-reviewer', password='test-password')
+        other_reviewer = User.objects.create_user(username='other-approval-reviewer', password='test-password')
         UserProfile.objects.create(user=owner, role='STUDENT', department='Computing')
         UserProfile.objects.create(user=reader, role='LECTURER', department='Computing')
         UserProfile.objects.create(user=reviewer, role='REVIEWER', department='Computing')
+        UserProfile.objects.create(user=other_reviewer, role='REVIEWER', department='Computing')
         publication = Publication.objects.create(
             title='Approval paper', owner=owner, abstract='Abstract',
-            pub_type='JOURNAL', subject_area='Computing',
+            pub_type='JOURNAL', subject_area='Computing', assigned_reviewer=reviewer,
         )
 
         self.client.force_authenticate(user=owner)
         self.assertEqual(self.client.post(reverse('publication-approve', args=[publication.id])).status_code, status.HTTP_403_FORBIDDEN)
+
         self.client.force_authenticate(user=reader)
         self.assertEqual(self.client.post(reverse('publication-approve', args=[publication.id])).status_code, status.HTTP_404_NOT_FOUND)
+
+        self.client.force_authenticate(user=other_reviewer)
+        self.assertEqual(self.client.post(reverse('publication-approve', args=[publication.id])).status_code, status.HTTP_404_NOT_FOUND)
+
         self.client.force_authenticate(user=reviewer)
         approved = self.client.post(reverse('publication-approve', args=[publication.id]))
         self.assertEqual(approved.status_code, status.HTTP_200_OK, approved.data)
         publication.refresh_from_db()
         self.assertTrue(publication.is_approved)
+   
 
     def test_reviewer_rejection_requires_reason_and_owner_can_resubmit(self):
         owner = User.objects.create_user(username='rejection-owner', password='test-password')
@@ -373,7 +396,7 @@ class PublicationTests(APITestCase):
         UserProfile.objects.create(user=reviewer, role='REVIEWER', department='Computing')
         publication = Publication.objects.create(
             title='Rejection test paper', owner=owner, abstract='Initial abstract',
-            pub_type='JOURNAL', subject_area='Computing',
+            pub_type='JOURNAL', subject_area='Computing', assigned_reviewer=reviewer,
         )
 
         self.client.force_authenticate(user=reviewer)
@@ -551,3 +574,128 @@ class PublicationTests(APITestCase):
         response = self.client.post(url, data, format='json')
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         self.assertEqual(Publication.objects.count(), 1)
+
+    def test_publication_is_automatically_assigned_by_subject_area(self):
+        owner = User.objects.create_user(username='routing-owner', password='test-password')
+        reviewer = User.objects.create_user(username='computer-science-reviewer', password='test-password')
+        UserProfile.objects.create(user=owner, role='STUDENT', department='Computer Science')
+        UserProfile.objects.create(user=reviewer, role='REVIEWER', department='Computer Science')
+        ReviewerSubjectArea.objects.create(
+            reviewer=reviewer,
+            subject_area='Computer Science'
+        )
+
+        self.client.force_authenticate(user=owner)
+        response = self.client.post(
+            reverse('publication-list'),
+            {
+                'title': 'Automatically routed paper',
+                'abstract': 'Testing automatic reviewer routing.',
+                'pub_type': 'JOURNAL',
+                'subject_area': 'Computer Science',
+            },
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED, response.data)
+        publication = Publication.objects.get(title='Automatically routed paper')
+        self.assertEqual(publication.assigned_reviewer, reviewer)
+
+    def test_publication_without_matching_subject_reviewer_remains_unassigned(self):
+        owner = User.objects.create_user(username='unassigned-owner', password='test-password')
+        reviewer = User.objects.create_user(username='engineering-reviewer', password='test-password')
+        UserProfile.objects.create(user=owner, role='STUDENT', department='Computer Science')
+        UserProfile.objects.create(user=reviewer, role='REVIEWER', department='Engineering')
+        ReviewerSubjectArea.objects.create(
+            reviewer=reviewer,
+            subject_area='Engineering'
+        )
+
+        self.client.force_authenticate(user=owner)
+        response = self.client.post(
+            reverse('publication-list'),
+            {
+                'title': 'Unmatched subject paper',
+                'abstract': 'No matching reviewer exists.',
+                'pub_type': 'JOURNAL',
+                'subject_area': 'Computer Science',
+            },
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED, response.data)
+        publication = Publication.objects.get(title='Unmatched subject paper')
+        self.assertIsNone(publication.assigned_reviewer)
+
+    def test_publication_is_reassigned_when_subject_area_changes(self):
+        owner = User.objects.create_user(
+            username='reroute-owner',
+            password='test-password'
+        )
+        computer_science_reviewer = User.objects.create_user(
+            username='cs-reviewer',
+            password='test-password'
+        )
+        engineering_reviewer = User.objects.create_user(
+            username='engineering-reviewer',
+            password='test-password'
+        )
+
+        UserProfile.objects.create(
+            user=owner,
+            role='STUDENT',
+            department='Computer Science'
+        )
+        UserProfile.objects.create(
+            user=computer_science_reviewer,
+            role='REVIEWER',
+            department='Computer Science'
+        )
+        UserProfile.objects.create(
+            user=engineering_reviewer,
+            role='REVIEWER',
+            department='Engineering'
+        )
+
+        ReviewerSubjectArea.objects.create(
+            reviewer=computer_science_reviewer,
+            subject_area='Computer Science'
+        )
+        ReviewerSubjectArea.objects.create(
+            reviewer=engineering_reviewer,
+            subject_area='Engineering'
+        )
+
+        publication = Publication.objects.create(
+            title='Subject change paper',
+            owner=owner,
+            abstract='Abstract',
+            pub_type='JOURNAL',
+            subject_area='Computer Science',
+            assigned_reviewer=computer_science_reviewer
+        )
+
+        self.client.force_authenticate(user=owner)
+
+        response = self.client.patch(
+            reverse('publication-detail', args=[publication.id]),
+            {'subject_area': 'Engineering'},
+            format='json'
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_200_OK,
+            response.data
+        )
+
+        publication.refresh_from_db()
+
+        self.assertEqual(
+            publication.assigned_reviewer,
+            engineering_reviewer
+        )
+        self.assertEqual(
+            publication.subject_area,
+            'Engineering'
+        )
