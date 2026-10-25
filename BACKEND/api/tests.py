@@ -7,7 +7,7 @@ from django.contrib.auth.models import User
 from django.test import override_settings
 from rest_framework_simplejwt.tokens import AccessToken
 import re
-from .models import AuthorProfile, Publication, PublicationDeletionRequest, PublicationReviewInvitation, UserNotification, UserProfile, UniversityDirectoryEntry, BroadcastMessage
+from .models import AuthorProfile, Publication, PublicationDeletionRequest, PublicationReviewInvitation, ReviewerSubjectArea, UserNotification, UserProfile, UniversityDirectoryEntry, BroadcastMessage
 from .serializers import RepositoryTokenObtainPairSerializer
 
 class TokenClaimsTests(TestCase):
@@ -125,6 +125,25 @@ class PublicationTests(APITestCase):
         entry.refresh_from_db()
         self.assertEqual(entry.claimed_by, user)
         self.assertEqual(response.data['department'], 'Computer Science')
+
+    def test_subject_matched_lecturer_is_first_supervisor_recommendation(self):
+        matching_lecturer, _ = self.create_supervisor('matched-subject-lecturer')
+        other_lecturer, _ = self.create_supervisor('other-subject-lecturer')
+        ReviewerSubjectArea.objects.create(
+            reviewer=matching_lecturer,
+            subject_area='Computer Science',
+        )
+
+        response = self.client.get(
+            reverse('supervisor_list'),
+            {'subject_area': 'computer science'},
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data[0]['user_id'], matching_lecturer.id)
+        self.assertTrue(response.data[0]['is_subject_match'])
+        other = next(item for item in response.data if item['user_id'] == other_lecturer.id)
+        self.assertFalse(other['is_subject_match'])
 
     def test_registration_rejects_wrong_role_and_already_claimed_directory_id(self):
         entry = UniversityDirectoryEntry.objects.create(

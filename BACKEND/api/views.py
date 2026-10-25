@@ -1,7 +1,7 @@
 import secrets
 import logging
 from smtplib import SMTPException
-from django.db.models import Q, F, Sum
+from django.db.models import Exists, OuterRef, Q, F, Sum
 from django.conf import settings
 from django.core.mail import send_mail
 from django.utils import timezone
@@ -12,7 +12,7 @@ from rest_framework.decorators import action
 from rest_framework.views import APIView
 from rest_framework.exceptions import NotFound, PermissionDenied
 from rest_framework.response import Response
-from .models import Publication, PublicationReviewInvitation, AuthorProfile, PublicationDeletionRequest, UserProfile, UserNotification, BroadcastMessage, UniversityDirectoryEntry
+from .models import Publication, PublicationReviewInvitation, ReviewerSubjectArea, AuthorProfile, PublicationDeletionRequest, UserProfile, UserNotification, BroadcastMessage, UniversityDirectoryEntry
 from .serializers import PublicationSerializer, AuthorProfileSerializer, UserRegistrationSerializer, PublicationDeletionRequestSerializer, UserProfileSerializer, UserNotificationSerializer, BroadcastMessageSerializer, AdminUserSerializer, AdminUserCreateSerializer, UniversityDirectoryEntrySerializer, SupervisorSerializer
 import random
 from django.contrib.auth.models import User
@@ -432,10 +432,24 @@ class CurrentUserProfileView(generics.RetrieveUpdateAPIView):
 class SupervisorListView(generics.ListAPIView):
     permission_classes = [permissions.AllowAny]
     serializer_class = SupervisorSerializer
-    queryset = UserProfile.objects.select_related('user').filter(
-        role='LECTURER',
-        user__is_active=True,
-    ).order_by('user__last_name', 'user__first_name', 'user__username')
+
+    def get_queryset(self):
+        subject_area = self.request.query_params.get('subject_area', '').strip()
+        subject_matches = ReviewerSubjectArea.objects.filter(
+            reviewer_id=OuterRef('user_id'),
+            subject_area__iexact=subject_area,
+        )
+        return UserProfile.objects.select_related('user').filter(
+            role='LECTURER',
+            user__is_active=True,
+        ).annotate(
+            is_subject_match=Exists(subject_matches),
+        ).order_by(
+            '-is_subject_match',
+            'user__last_name',
+            'user__first_name',
+            'user__username',
+        )
 
 
 class UserNotificationListView(generics.ListAPIView):

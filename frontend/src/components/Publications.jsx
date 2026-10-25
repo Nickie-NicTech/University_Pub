@@ -171,10 +171,20 @@ export default function Publications({ user }) {
     useEffect(() => {
         if (!canWrite) return;
         let isCurrentRequest = true;
-        API.get('users/supervisors/')
+        setSupervisorLoading(true);
+        setSupervisorError('');
+        const query = subject.trim()
+            ? `?subject_area=${encodeURIComponent(subject.trim())}`
+            : '';
+        API.get(`users/supervisors/${query}`)
             .then(({ data }) => {
                 if (!isCurrentRequest) return;
-                setSupervisors(Array.isArray(data) ? data : []);
+                const lecturers = Array.isArray(data) ? data : [];
+                setSupervisors(lecturers);
+                const matchingSupervisor = lecturers.find((lecturer) => lecturer.is_subject_match);
+                if (matchingSupervisor && !editingId) {
+                    setSupervisorId(String(matchingSupervisor.user_id));
+                }
             })
             .catch((err) => {
                 if (!isCurrentRequest) return;
@@ -185,7 +195,7 @@ export default function Publications({ user }) {
                 if (isCurrentRequest) setSupervisorLoading(false);
             });
         return () => { isCurrentRequest = false; };
-    }, [canWrite]);
+    }, [canWrite, subject, editingId]);
 
     useEffect(() => {
         if (!showAuthorModal) return;
@@ -699,7 +709,7 @@ export default function Publications({ user }) {
                                 <>
                                 <select id="publication-reviewer" value={supervisorId} onChange={(event) => setSupervisorId(event.target.value)} required style={formInputStyle}>
                                     <option value="">Select a lecturer supervisor</option>
-                                    {supervisors.map((lecturer) => <option key={lecturer.user_id} value={lecturer.user_id}>{lecturer.name} — {lecturer.department}</option>)}
+                                    {supervisors.map((lecturer) => <option key={lecturer.user_id} value={lecturer.user_id}>{lecturer.name} — {lecturer.department}{lecturer.is_subject_match ? ' (subject match)' : ''}</option>)}
                                 </select>
                                 <label htmlFor="publication-co-supervisor" style={{ ...labelStyle, marginTop: '10px' }}>Co-supervisor (optional)</label>
                                 <select id="publication-co-supervisor" value={coSupervisorId} onChange={(event) => setCoSupervisorId(event.target.value)} style={formInputStyle}>

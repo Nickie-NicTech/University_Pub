@@ -71,6 +71,7 @@ class Publication(models.Model):
 
     title = models.CharField(max_length=255)
     owner = models.ForeignKey(User, on_delete=models.SET_NULL, related_name='owned_publications', blank=True, null=True)
+    assigned_reviewer = models.ForeignKey(User, on_delete=models.SET_NULL, related_name='assigned_publications', blank=True, null=True)
     abstract = models.TextField()
     pub_type = models.CharField(max_length=20, choices=PUBLICATION_TYPES)
     subject_area = models.CharField(max_length=100)
@@ -165,6 +166,26 @@ class PublicationDeletionRequest(models.Model):
 
     def __str__(self):
         return f"Deletion request for {self.publication_id} ({self.status})"
+
+
+class ReviewerSubjectArea(models.Model):
+    reviewer = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name='review_subject_areas',
+    )
+    subject_area = models.CharField(max_length=100)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=['reviewer', 'subject_area'],
+                name='unique_reviewer_subject_area',
+            ),
+        ]
+
+    def __str__(self):
+        return f'{self.reviewer.username} - {self.subject_area}'
 
 
 class BroadcastMessage(models.Model):

@@ -429,10 +429,11 @@ class SupervisorSerializer(serializers.ModelSerializer):
     name = serializers.SerializerMethodField()
     username = serializers.CharField(source='user.username', read_only=True)
     user_id = serializers.IntegerField(read_only=True)
+    is_subject_match = serializers.BooleanField(read_only=True)
 
     class Meta:
         model = UserProfile
-        fields = ['id', 'user_id', 'name', 'username', 'department']
+        fields = ['id', 'user_id', 'name', 'username', 'department', 'is_subject_match']
 
     def get_name(self, profile):
         return profile.user.get_full_name() or profile.user.username
