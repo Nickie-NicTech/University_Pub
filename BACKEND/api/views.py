@@ -24,8 +24,8 @@ from rest_framework_simplejwt.tokens import RefreshToken
 logger = logging.getLogger(__name__)
 
 
-def notify_user(recipient, subject, message):
-    UserNotification.objects.create(user=recipient, title=subject, message=message)
+def notify_user(recipient, subject, message, link=''):
+    UserNotification.objects.create(user=recipient, title=subject, message=message, link=link)
     if not recipient.email:
         return 'An in-app notification was saved, but this user has no email address.'
     try:
@@ -43,6 +43,32 @@ def notify_user(recipient, subject, message):
         logger.error('Publication review email was not sent to user %s.', recipient.pk)
         return 'An in-app notification was saved, but the email could not be sent.'
     return ''
+
+
+def refresh_review_status(publication):
+    invitations = publication.review_invitations.all()
+    accepted = invitations.filter(status='ACCEPTED')
+    has_pending_invitations = invitations.filter(status='INVITED').exists()
+
+    if not accepted.exists():
+        publication.review_status = 'PENDING_INVITATIONS' if has_pending_invitations else 'REVIEWER_DECLINED'
+        publication.is_approved = False
+    elif has_pending_invitations or accepted.filter(decision='PENDING').exists():
+        publication.review_status = 'PENDING'
+        publication.is_approved = False
+    elif accepted.filter(decision='REVISION_REQUESTED').exists():
+        publication.review_status = 'REVISION_REQUESTED'
+        publication.is_approved = False
+    else:
+        publication.review_status = 'APPROVED'
+        publication.is_approved = True
+
+    publication.review_feedback = '\n\n'.join(
+        f'{invitation.reviewer.get_full_name() or invitation.reviewer.username}: {invitation.feedback.strip()}'
+        for invitation in accepted.select_related('reviewer').order_by('created_at', 'pk')
+        if invitation.feedback.strip()
+    )
+    publication.save(update_fields=['review_status', 'is_approved', 'review_feedback'])
 
 
 class RepositoryTokenObtainPairView(TokenObtainPairView):
@@ -84,7 +110,18 @@ class PublicationViewSet(viewsets.ModelViewSet):
         queryset = Publication.objects.all().order_by('-upload_date')
         queryset = queryset.prefetch_related('review_invitations__reviewer', 'authors')
         user = self.request.user
-        if not user.is_authenticated:
+        highlight_mode = (
+            self.action == 'list'
+            and self.request.query_params.get('highlights', '').lower() == 'true'
+        )
+        review_assignment_mode = (
+            self.action == 'list'
+            and self.request.query_params.get('review_assignments', '').lower() == 'true'
+            and user.is_authenticated
+        )
+        if review_assignment_mode:
+            queryset = queryset.filter(review_invitations__reviewer=user).distinct()
+        elif highlight_mode or not user.is_authenticated:
             queryset = queryset.filter(is_approved=True)
         elif not user.is_staff:
             queryset = queryset.filter(
@@ -93,15 +130,53 @@ class PublicationViewSet(viewsets.ModelViewSet):
                 | Q(review_invitations__reviewer=user)
             ).distinct()
 
-        search_query = self.request.query_params.get('search', None)
+        search_query = self.request.query_params.get('search', '').strip()
         if search_query:
+            supported_fields = {
+                'title': Q(title__icontains=search_query),
+                'abstract': Q(abstract__icontains=search_query),
+                'subject_area': Q(subject_area__icontains=search_query),
+                'author': (
+                    Q(authors__first_name__icontains=search_query)
+                    | Q(authors__last_name__icontains=search_query)
+                ),
+            }
+            requested_fields = self.request.query_params.getlist('search_in')
+            search_fields = set(requested_fields) if requested_fields else set(supported_fields)
+            search_filter = Q()
+            for field in search_fields & supported_fields.keys():
+                search_filter |= supported_fields[field]
+            queryset = queryset.filter(search_filter).distinct() if search_filter else queryset.none()
+
+        publication_types = self.request.query_params.getlist('pub_type')
+        if publication_types:
+            queryset = queryset.filter(pub_type__in=publication_types)
+
+        author_query = self.request.query_params.get('author', '').strip()
+        if author_query:
             queryset = queryset.filter(
-                Q(title__icontains=search_query)
-                | Q(subject_area__icontains=search_query)
-                | Q(abstract__icontains=search_query)
-                | Q(authors__first_name__icontains=search_query)
-                | Q(authors__last_name__icontains=search_query)
+                Q(authors__first_name__icontains=author_query)
+                | Q(authors__last_name__icontains=author_query)
             ).distinct()
+
+        subject_area = self.request.query_params.get('subject_area', '').strip()
+        if subject_area:
+            queryset = queryset.filter(subject_area__icontains=subject_area)
+
+        has_search_filters = bool(
+            search_query
+            or publication_types
+            or author_query
+            or subject_area
+        )
+        if (
+            self.action == 'list'
+            and user.is_authenticated
+            and not has_search_filters
+            and not highlight_mode
+            and not review_assignment_mode
+        ):
+            queryset = queryset.filter(owner=user)
         return queryset
 
     def perform_update(self, serializer):
@@ -118,16 +193,9 @@ class PublicationViewSet(viewsets.ModelViewSet):
         resubmitting = publication.review_status == 'REVISION_REQUESTED'
         publication = serializer.save(is_approved=False, review_feedback='')
         accepted = publication.review_invitations.filter(status='ACCEPTED')
-        pending_invitations = publication.review_invitations.filter(status='INVITED').exists()
-        if pending_invitations:
-            publication.review_status = 'PENDING_INVITATIONS'
-        elif not accepted.exists():
-            publication.review_status = 'REVIEWER_DECLINED'
-        else:
-            publication.review_status = 'PENDING'
         if resubmitting:
-            accepted.update(decision='PENDING')
-        publication.save(update_fields=['review_status'])
+            accepted.update(decision='PENDING', feedback='')
+        refresh_review_status(publication)
         self._notification_warning = ''
         invitees = publication.review_invitations.filter(status='INVITED').exclude(
             reviewer_id__in=previously_invited
@@ -137,6 +205,7 @@ class PublicationViewSet(viewsets.ModelViewSet):
                 invitation.reviewer,
                 f'Publication review invitation: {publication.title}',
                 f'{publication.owner.get_full_name() or publication.owner.username} invited you to review "{publication.title}" as {invitation.get_role_display().lower()}.',
+                f'/lecturer/reviews?publication={publication.pk}',
             )
             self._notification_warning = self._notification_warning or warning
         if resubmitting:
@@ -145,6 +214,7 @@ class PublicationViewSet(viewsets.ModelViewSet):
                     invitation.reviewer,
                     f'Publication resubmitted: {publication.title}',
                     f'{publication.owner.get_full_name() or publication.owner.username} revised "{publication.title}" and resubmitted it for your review.',
+                    f'/lecturer/reviews?publication={publication.pk}',
                 )
                 self._notification_warning = self._notification_warning or warning
 
@@ -161,6 +231,7 @@ class PublicationViewSet(viewsets.ModelViewSet):
                 invitation.reviewer,
                 f'Publication review invitation: {publication.title}',
                 f'{self.request.user.get_full_name() or self.request.user.username} invited you to review "{publication.title}" as {invitation.get_role_display().lower()}.',
+                f'/lecturer/reviews?publication={publication.pk}',
             )
             self._notification_warning = self._notification_warning or warning
 
@@ -218,20 +289,31 @@ class PublicationViewSet(viewsets.ModelViewSet):
         invitation.status = decision
         invitation.responded_at = timezone.now()
         invitation.save(update_fields=['status', 'responded_at'])
-        pending_invitation = publication.review_invitations.filter(status='INVITED').exists()
-        accepted = publication.review_invitations.filter(status='ACCEPTED').exists()
-        if pending_invitation:
-            publication.review_status = 'PENDING_INVITATIONS'
-        elif accepted:
-            publication.review_status = 'PENDING'
-        else:
-            publication.review_status = 'REVIEWER_DECLINED'
-        publication.save(update_fields=['review_status'])
+        refresh_review_status(publication)
         response_data = dict(self.get_serializer(publication).data)
+        if publication.review_status == 'APPROVED':
+            title = f'Publication approved: {publication.title}'
+            message = (
+                f'The remaining accepted reviewer approved "{publication.title}", and all other invited '
+                'reviewers declined. The publication is now available in the repository.'
+            )
+        elif publication.review_status == 'REVISION_REQUESTED':
+            title = f'Revisions requested: {publication.title}'
+            message = (
+                f'Your reviewers requested revisions for "{publication.title}":\n\n'
+                f'{publication.review_feedback}\n\nPlease revise and resubmit your publication.'
+            )
+        else:
+            title = f'Reviewer invitation {decision.lower()}: {publication.title}'
+            message = (
+                f'{request.user.get_full_name() or request.user.username} {decision.lower()} the invitation '
+                f'to review "{publication.title}".'
+            )
         warning = notify_user(
             publication.owner,
-            f'Reviewer invitation {decision.lower()}: {publication.title}',
-            f'{request.user.get_full_name() or request.user.username} {decision.lower()} the invitation to review "{publication.title}".',
+            title,
+            message,
+            f'/?publication={publication.pk}',
         )
         if warning:
             response_data['notification_warning'] = warning
@@ -263,22 +345,19 @@ class PublicationViewSet(viewsets.ModelViewSet):
         invitation.decision = decision
         invitation.feedback = feedback.strip()
         invitation.save(update_fields=['decision', 'feedback'])
-        publication.review_feedback = invitation.feedback
-        accepted = publication.review_invitations.filter(status='ACCEPTED')
-        pending_invitation = publication.review_invitations.filter(status='INVITED').exists()
-        revision_requested = accepted.filter(decision='REVISION_REQUESTED').exists()
-        all_approved = accepted.exists() and not accepted.exclude(decision='APPROVED').exists()
-        if revision_requested:
-            publication.review_status = 'REVISION_REQUESTED'
-        elif all_approved and not pending_invitation:
-            publication.review_status = 'APPROVED'
-            publication.is_approved = True
-        publication.save(update_fields=['review_status', 'review_feedback', 'is_approved'])
-        if decision == 'REVISION_REQUESTED':
+        refresh_review_status(publication)
+        if publication.review_status == 'REVISION_REQUESTED':
             title = f'Revisions requested: {publication.title}'
             message = (
-                f'{request.user.get_full_name() or request.user.username} requested revisions for '
-                f'"{publication.title}":\n\n{invitation.feedback}\n\nPlease revise and resubmit your publication.'
+                f'Your reviewers requested revisions for "{publication.title}":\n\n'
+                f'{publication.review_feedback}\n\nPlease revise and resubmit your publication.'
+            )
+        elif decision == 'REVISION_REQUESTED':
+            title = f'Reviewer feedback received: {publication.title}'
+            message = (
+                f'{request.user.get_full_name() or request.user.username} provided feedback on '
+                f'"{publication.title}":\n\n{invitation.feedback}\n\n'
+                "The overall outcome is pending the remaining reviewers' decisions."
             )
         elif publication.is_approved:
             title = f'Publication approved: {publication.title}'
@@ -287,7 +366,8 @@ class PublicationViewSet(viewsets.ModelViewSet):
             title = f'Reviewer approved: {publication.title}'
             message = f'{request.user.get_full_name() or request.user.username} approved "{publication.title}". It is waiting for other reviewers.'
         response_data = dict(self.get_serializer(publication).data)
-        warning = notify_user(publication.owner, title, message)
+        link = f'/?publication={publication.pk}'
+        warning = notify_user(publication.owner, title, message, link)
         if warning:
             response_data['notification_warning'] = warning
         return Response(response_data)

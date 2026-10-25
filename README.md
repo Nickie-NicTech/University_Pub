@@ -44,9 +44,13 @@ The frontend API client currently targets `http://localhost:8000/api/`.
 
 ## Supervisor review workflow
 
-Students and lecturers choose a required lecturer supervisor and optional co-supervisor when creating each publication; supervisor assignments are not made during registration. Each selected lecturer receives an invitation and can accept or decline it. Lecturers use the **Review desk** in the application navigation to read and download submitted manuscripts, respond to invitations, approve accepted reviews, or request revisions with written feedback. Review actions are disabled after processing, and a publication is approved once every reviewer who accepted has approved it. Review requests and decisions are also sent as in-app notifications and email.
+Students and lecturers choose a required lecturer supervisor and optional co-supervisor when creating each publication; supervisor assignments are not made during registration. Each selected lecturer receives an invitation and can accept or decline it. Lecturers open assigned manuscripts and the **Review desk** from their review notifications. An accepted reviewer can submit a decision immediately, even while another invitation is unanswered. The final outcome waits until all invitations are answered and every accepted reviewer has decided: all accepted reviewers must approve for publication, while revision feedback from any accepted reviewer requests changes. Declined invitations do not block the remaining accepted reviewers. Review requests and decisions are also sent as in-app notifications and email; clicking a revision notification takes the owner to the publication in their repository.
 
 After upgrading an existing database, run migrations. Legacy reviewer accounts are converted to lecturers by the migration.
+
+## Repository search
+
+Signed-in users see their own publications in the repository list by default; the highlights show the latest approved repository publications. Searching or applying a filter opens matching repository results, subject to publication visibility permissions. The repository search supports title, abstract, author names, and subject areas in any combination, with additional filters for publication type, author name, and subject area.
 
 ## Local data
 

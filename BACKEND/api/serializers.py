@@ -289,7 +289,7 @@ class PublicationReviewInvitationSerializer(serializers.ModelSerializer):
 class UserNotificationSerializer(serializers.ModelSerializer):
     class Meta:
         model = UserNotification
-        fields = ['id', 'title', 'message', 'created_at', 'read_at']
+        fields = ['id', 'title', 'message', 'link', 'created_at', 'read_at']
         read_only_fields = fields
 
 

@@ -1,15 +1,25 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { Flame, UserRoundPlus, Search, X, Check, Pencil, Trash2, Download, Eye, Plus, LoaderCircle } from 'lucide-react';
+import { useSearchParams } from 'react-router-dom';
+import { Flame, UserRoundPlus, Search, X, Check, Pencil, Trash2, Download, Eye, Plus, LoaderCircle, SlidersHorizontal } from 'lucide-react';
 import API from '../api';
 
 export default function Publications({ user }) {
+    const [searchParams, setSearchParams] = useSearchParams();
     const [publications, setPublications] = useState([]);
+    const [highlights, setHighlights] = useState([]);
     const [publicationsLoading, setPublicationsLoading] = useState(true);
     const [publicationsError, setPublicationsError] = useState('');
+    const [highlightsLoading, setHighlightsLoading] = useState(true);
+    const [highlightsError, setHighlightsError] = useState('');
     const [downloadingPublicationId, setDownloadingPublicationId] = useState(null);
     const [pendingAction, setPendingAction] = useState('');
     const [actionFeedback, setActionFeedback] = useState(null);
     const [search, setSearch] = useState('');
+    const [showAllFilters, setShowAllFilters] = useState(false);
+    const [searchFields, setSearchFields] = useState(['title', 'abstract', 'author', 'subject_area']);
+    const [publicationTypes, setPublicationTypes] = useState([]);
+    const [authorFilter, setAuthorFilter] = useState('');
+    const [subjectFilter, setSubjectFilter] = useState('');
     const [editingId, setEditingId] = useState(null);
     const [showSubmissionForm, setShowSubmissionForm] = useState(false);
     
@@ -44,12 +54,27 @@ export default function Publications({ user }) {
 
     // Restrictions configuration boundary parameters
     const canWrite = user && ['STUDENT', 'LECTURER'].includes(user.role);
-    const latestHighlights = publications.slice(0, 3); // Grab top 3 items for the feed banner
-
+    const latestHighlights = highlights.slice(0, 3);
     const fetchPublications = useCallback(async () => {
-        const res = await API.get(`publications/?search=${encodeURIComponent(search)}`);
+        const params = new URLSearchParams();
+        if (search.trim()) {
+            params.set('search', search.trim());
+            searchFields.forEach((field) => params.append('search_in', field));
+            if (searchFields.length === 0) params.append('search_in', 'none');
+        }
+        publicationTypes.forEach((type) => params.append('pub_type', type));
+        if (authorFilter.trim()) params.set('author', authorFilter.trim());
+        if (subjectFilter.trim()) params.set('subject_area', subjectFilter.trim());
+        const query = params.toString();
+        const res = await API.get(`publications/${query ? `?${query}` : ''}`);
         return Array.isArray(res.data) ? res.data : [];
-    }, [search]);
+    }, [search, searchFields, publicationTypes, authorFilter, subjectFilter]);
+
+    const toggleValue = (value, setValues) => {
+        setValues((current) => current.includes(value)
+            ? current.filter((item) => item !== value)
+            : [...current, value]);
+    };
 
     const refreshPublications = async () => {
         setPublicationsLoading(true);
@@ -76,6 +101,18 @@ export default function Publications({ user }) {
         setCoSupervisorId('');
     };
 
+    const startEditing = (publication) => {
+        setEditingId(publication.id);
+        setTitle(publication.title);
+        setAbstract(publication.abstract);
+        setPubType(publication.pub_type);
+        setSubject(publication.subject_area);
+        setSelectedAuthors(publication.authors_details || []);
+        setSupervisorId(publication.supervisor_id ? String(publication.supervisor_id) : '');
+        setCoSupervisorId(publication.co_supervisor_id ? String(publication.co_supervisor_id) : '');
+        setShowSubmissionForm(true);
+    };
+
     useEffect(() => {
         let isCurrentRequest = true;
         fetchPublications()
@@ -92,6 +129,44 @@ export default function Publications({ user }) {
             });
         return () => { isCurrentRequest = false; };
     }, [fetchPublications]);
+
+    useEffect(() => {
+        let isCurrentRequest = true;
+        API.get('publications/?highlights=true')
+            .then(({ data }) => {
+                if (isCurrentRequest) setHighlights(Array.isArray(data) ? data : []);
+            })
+            .catch((err) => {
+                if (!isCurrentRequest) return;
+                console.error('Unable to load repository highlights:', err);
+                setHighlightsError(getErrorMessage(err, 'Unable to load repository highlights.'));
+            })
+            .finally(() => {
+                if (isCurrentRequest) setHighlightsLoading(false);
+            });
+        return () => { isCurrentRequest = false; };
+    }, []);
+
+    useEffect(() => {
+        const publicationId = searchParams.get('publication');
+        if (!publicationId || publicationsLoading) return;
+
+        const publication = publications.find((item) => String(item.id) === publicationId);
+        if (!publication) {
+            setActionFeedback({ type: 'error', message: 'The publication linked from this notification is not available in your repository.' });
+        } else {
+            document.getElementById(`publication-${publication.id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+
+        const nextParams = new URLSearchParams(searchParams);
+        nextParams.delete('publication');
+        nextParams.delete('action');
+        setSearchParams(nextParams, { replace: true });
+    }, [publications, publicationsLoading, searchParams, setSearchParams]);
+
+    const hasSearchFilters = Boolean(
+        search.trim() || publicationTypes.length || authorFilter.trim() || subjectFilter.trim()
+    );
 
     useEffect(() => {
         if (!canWrite) return;
@@ -306,20 +381,14 @@ export default function Publications({ user }) {
         }
     };
 
-    const publicationActions = (publication, dark = false) => {
+    const publicationActions = (publication) => {
         if (!publication.file_attachment) return null;
-        const buttonStyle = {
-            ...iconButtonStyle,
-            color: dark ? '#f8fafc' : '#0369a1',
-            background: dark ? 'rgba(255, 255, 255, 0.12)' : '#fff',
-            borderColor: dark ? 'rgba(255, 255, 255, 0.35)' : '#cbd5e1',
-        };
         return (
             <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                <button type="button" onClick={() => viewPublication(publication)} title={`View ${publication.title}`} aria-label={`View ${publication.title}`} style={buttonStyle}>
+                <button type="button" onClick={() => viewPublication(publication)} title={`View ${publication.title}`} aria-label={`View ${publication.title}`} style={highlightIconButtonStyle}>
                     <Eye size={16} aria-hidden="true" />
                 </button>
-                <button type="button" onClick={() => downloadPublication(publication)} disabled={downloadingPublicationId === publication.id} title={`Download ${publication.title}`} aria-label={`Download ${publication.title}`} style={{ ...buttonStyle, cursor: downloadingPublicationId === publication.id ? 'wait' : 'pointer' }}>
+                <button type="button" onClick={() => downloadPublication(publication)} disabled={downloadingPublicationId === publication.id} title={`Download ${publication.title}`} aria-label={`Download ${publication.title}`} style={{ ...highlightIconButtonStyle, cursor: downloadingPublicationId === publication.id ? 'wait' : 'pointer' }}>
                     {downloadingPublicationId === publication.id ? <LoaderCircle size={16} className="publication-spinner" aria-hidden="true" /> : <Download size={16} aria-hidden="true" />}
                 </button>
             </div>
@@ -333,56 +402,173 @@ export default function Publications({ user }) {
             <div style={{ flex: 1, minWidth: 0, padding: '24px clamp(16px, 4vw, 48px)', overflowY: 'auto', height: '100%', boxSizing: 'border-box' }}>
                 <div style={{ maxWidth: '1120px', margin: '0 auto' }}>
                     
-                    {/* 🌟 New Highlights Stream Banner */}
-                    <div style={{ marginBottom: '28px' }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', marginBottom: '12px' }}>
-                            <h4 style={{ margin: 0, fontSize: '0.9rem', color: '#64748b', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '6px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                                <Flame size={16} color="#f97316"/> Latest Repository Highlights
-                            </h4>
+                    <form onSubmit={(event) => event.preventDefault()} style={{ display: 'grid', gap: '14px', marginBottom: '24px', padding: '16px', border: '1px solid #cbd5e1', borderRadius: '8px', background: '#fff', boxShadow: '0 1px 2px rgba(0,0,0,0.04)' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px' }}>
+                            <h2 style={{ margin: 0, color: '#1e293b', fontSize: '1.1rem' }}>Repository publications</h2>
                             {canWrite && (
                                 <button type="button" onClick={() => setShowSubmissionForm(true)} style={submissionButtonStyle}>
                                     <Plus size={17} aria-hidden="true" /> Submit research
                                 </button>
                             )}
                         </div>
-                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '16px' }}>
-                            {latestHighlights.map(high => (
-                                <div key={`high-${high.id}`} style={{ background: 'linear-gradient(135deg, #1e293b, #334155)', color: '#f8fafc', padding: '16px', borderRadius: '8px', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.05)' }}>
-                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px' }}>
-                                        <span style={{ fontSize: '0.7rem', background: '#38bdf8', color: '#1e293b', fontWeight: 700, padding: '2px 6px', borderRadius: '4px', textTransform: 'uppercase' }}>{high.pub_type}</span>
-                                        {publicationActions(high, true)}
-                                    </div>
-                                    <h4 style={{ margin: '8px 0 4px 0', fontSize: '0.95rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{high.title}</h4>
-                                    <p style={{ margin: 0, fontSize: '0.8rem', color: '#94a3b8' }}>Field: {high.subject_area}</p>
-                                </div>
-                            ))}
-                        </div>
-                    </div>
-
-                    {/* Live Query Engine Module */}
-                    <div style={{ marginBottom: '24px' }}>
-                        <input 
-                            type="text" 
-                            placeholder="🔍 Guest Search Gateway: Query by title, abstract description, field, or classification area..." 
-                            value={search} 
-                            onChange={e => {
-                                setSearch(e.target.value);
+                        <label htmlFor="publication-search" style={{ display: 'flex', alignItems: 'center', gap: '7px', color: '#334155', fontSize: '.88rem', fontWeight: 700 }}>
+                            <Search size={16} aria-hidden="true" /> Search the repository
+                        </label>
+                        <input
+                            id="publication-search"
+                            type="search"
+                            placeholder="Enter title, abstract, author, or subject keywords"
+                            value={search}
+                            onChange={(event) => {
+                                setSearch(event.target.value);
                                 setPublicationsLoading(true);
                                 setPublicationsError('');
                             }}
-                            style={{
-                                width: '100%', padding: '14px 18px', borderRadius: '8px', 
-                                border: '1px solid #cbd5e1', backgroundColor: '#fff', fontSize: '1rem',
-                                color: '#1e293b', boxSizing: 'border-box', boxShadow: '0 1px 2px rgba(0,0,0,0.05)'
-                            }}
+                            style={{ width: '100%', padding: '12px 14px', borderRadius: '6px', border: '1px solid #cbd5e1', backgroundColor: '#fff', fontSize: '1rem', color: '#1e293b', boxSizing: 'border-box' }}
                         />
-                    </div>
+                        <button
+                            type="button"
+                            aria-expanded={showAllFilters}
+                            aria-controls="repository-search-filters"
+                            onClick={() => setShowAllFilters((expanded) => !expanded)}
+                            style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 7, justifySelf: 'start', padding: '8px 11px', border: '1px solid #cbd5e1', borderRadius: 5, background: '#f8fafc', color: '#334155', cursor: 'pointer', font: 'inherit', fontSize: '.82rem', fontWeight: 600 }}
+                        >
+                            <SlidersHorizontal size={15} aria-hidden="true" />
+                            {showAllFilters ? 'Hide filters' : 'Show all filters'}
+                        </button>
+                        {showAllFilters && <div id="repository-search-filters" style={{ display: 'grid', gap: 14 }}>
+                        <fieldset style={{ display: 'grid', gap: '9px', margin: 0, padding: 0, border: 0 }}>
+                            <legend style={{ display: 'flex', alignItems: 'center', gap: 7, marginBottom: 8, color: '#334155', fontSize: '.83rem', fontWeight: 700 }}>
+                                <SlidersHorizontal size={15} aria-hidden="true" /> Search within
+                            </legend>
+                            <div style={filterOptionsStyle}>
+                                {[
+                                    ['title', 'Title'],
+                                    ['abstract', 'Abstract'],
+                                    ['author', 'Authors'],
+                                    ['subject_area', 'Subject area'],
+                                ].map(([field, label]) => (
+                                    <label key={field} style={filterLabelStyle}>
+                                        <input
+                                            type="checkbox"
+                                            checked={searchFields.includes(field)}
+                                            onChange={() => {
+                                                toggleValue(field, setSearchFields);
+                                                setPublicationsLoading(true);
+                                                setPublicationsError('');
+                                            }}
+                                        />
+                                        {label}
+                                    </label>
+                                ))}
+                            </div>
+                            <span style={{ color: '#64748b', fontSize: '.77rem' }}>Choose where the search phrase should match. These can be combined.</span>
+                        </fieldset>
+                        <fieldset style={{ display: 'grid', gap: '9px', margin: 0, padding: 0, border: 0 }}>
+                            <legend style={{ marginBottom: 8, color: '#334155', fontSize: '.83rem', fontWeight: 700 }}>Publication type</legend>
+                            <div style={filterOptionsStyle}>
+                                {[
+                                    ['JOURNAL', 'Journal article'],
+                                    ['CONFERENCE', 'Conference paper'],
+                                    ['THESIS', 'Thesis'],
+                                    ['DISSERTATION', 'Dissertation'],
+                                ].map(([value, label]) => (
+                                    <label key={value} style={filterLabelStyle}>
+                                        <input
+                                            type="checkbox"
+                                            checked={publicationTypes.includes(value)}
+                                            onChange={() => {
+                                                toggleValue(value, setPublicationTypes);
+                                                setPublicationsLoading(true);
+                                                setPublicationsError('');
+                                            }}
+                                        />
+                                        {label}
+                                    </label>
+                                ))}
+                            </div>
+                        </fieldset>
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '10px' }}>
+                            <label htmlFor="author-filter" style={filterInputLabelStyle}>
+                                Filter by author
+                                <input
+                                    id="author-filter"
+                                    type="search"
+                                    value={authorFilter}
+                                    placeholder="Author first or last name"
+                                    onChange={(event) => {
+                                        setAuthorFilter(event.target.value);
+                                        setPublicationsLoading(true);
+                                        setPublicationsError('');
+                                    }}
+                                    style={filterInputStyle}
+                                />
+                            </label>
+                            <label htmlFor="subject-filter" style={filterInputLabelStyle}>
+                                Filter by subject area
+                                <input
+                                    id="subject-filter"
+                                    type="search"
+                                    value={subjectFilter}
+                                    placeholder="e.g. Computer Science"
+                                    onChange={(event) => {
+                                        setSubjectFilter(event.target.value);
+                                        setPublicationsLoading(true);
+                                        setPublicationsError('');
+                                    }}
+                                    style={filterInputStyle}
+                                />
+                            </label>
+                        </div>
+                        {(search || authorFilter || subjectFilter || publicationTypes.length > 0 || searchFields.length !== 4) && (
+                            <button type="button" onClick={() => {
+                                setSearch('');
+                                setSearchFields(['title', 'abstract', 'author', 'subject_area']);
+                                setPublicationTypes([]);
+                                setAuthorFilter('');
+                                setSubjectFilter('');
+                                setPublicationsLoading(true);
+                                setPublicationsError('');
+                            }} style={{ justifySelf: 'start', padding: 0, border: 0, background: 'transparent', color: '#0369a1', textDecoration: 'underline', cursor: 'pointer', font: 'inherit', fontSize: '.82rem' }}>
+                                Clear all search filters
+                            </button>
+                        )}
+                        </div>}
+                    </form>
+                    <section aria-label="Latest repository highlights" style={{ marginBottom: '28px' }}>
+                        <h2 style={{ margin: '0 0 12px', fontSize: '0.9rem', color: '#64748b', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '6px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                            <Flame size={16} color="#f97316" aria-hidden="true" /> Latest Repository Highlights
+                        </h2>
+                        {highlightsError && <p role="alert" style={{ color: '#b91c1c', fontSize: '.85rem' }}>{highlightsError}</p>}
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '16px' }}>
+                            {latestHighlights.map((highlight) => (
+                                <article key={`highlight-${highlight.id}`} style={{ background: 'linear-gradient(135deg, #1e293b, #334155)', color: '#f8fafc', padding: '16px', borderRadius: '8px', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.05)' }}>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '10px' }}>
+                                        <span style={{ fontSize: '0.7rem', background: '#38bdf8', color: '#1e293b', fontWeight: 700, padding: '2px 6px', borderRadius: '4px', textTransform: 'uppercase' }}>{highlight.pub_type}</span>
+                                        {publicationActions(highlight)}
+                                    </div>
+                                    <h3 style={{ margin: '8px 0 4px', fontSize: '0.95rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{highlight.title}</h3>
+                                    <p style={{ margin: 0, fontSize: '0.8rem', color: '#94a3b8' }}>Field: {highlight.subject_area}</p>
+                                </article>
+                            ))}
+                            {highlightsLoading && (
+                                <p role="status" style={{ display: 'inline-flex', alignItems: 'center', gap: 7, margin: 0, color: '#64748b', fontSize: '.85rem' }}>
+                                    <LoaderCircle size={15} className="publication-spinner" aria-hidden="true" /> Loading highlights…
+                                </p>
+                            )}
+                            {!highlightsLoading && !highlightsError && latestHighlights.length === 0 && (
+                                <p style={{ margin: 0, color: '#64748b', fontSize: '.85rem' }}>No publications are available to highlight.</p>
+                            )}
+                        </div>
+                    </section>
                     <p role="status" aria-live="polite" style={{ margin: '-12px 0 16px', color: '#64748b', fontSize: '0.85rem' }}>
                         {publicationsLoading
                             ? <span style={{ display: 'inline-flex', alignItems: 'center', gap: '7px' }}><LoaderCircle size={15} className="publication-spinner" aria-hidden="true" /> Loading publications…</span>
                             : publicationsError
                                 ? publicationsError
-                                : `Showing ${publications.length} of ${publications.length} results${search.trim() ? ` for “${search.trim()}”` : ''}.`}
+                                : user && !hasSearchFilters
+                                    ? `Showing your ${publications.length} personal publication${publications.length === 1 ? '' : 's'}. Search or apply a filter to browse the repository.`
+                                    : `Showing ${publications.length} result${publications.length === 1 ? '' : 's'}${search.trim() ? ` for “${search.trim()}”` : ''}.`}
                     </p>
                     {actionFeedback && (
                         <p role={actionFeedback.type === 'error' ? 'alert' : 'status'} style={feedbackStyle(actionFeedback.type)}>
@@ -394,11 +580,15 @@ export default function Publications({ user }) {
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
                         {!publicationsLoading && !publicationsError && publications.length === 0 && (
                             <p style={{ margin: 0, padding: '20px', border: '1px solid #e2e8f0', borderRadius: '8px', background: '#fff', color: '#64748b', textAlign: 'center' }}>
-                                {search.trim() ? 'No publications match your search. Try different keywords.' : 'No publications are available yet.'}
+                                {hasSearchFilters
+                                    ? 'No publications match these search filters. Try changing or clearing your filters.'
+                                    : user
+                                        ? 'Your personal repository is empty. Search or apply a filter to browse available repository publications.'
+                                        : 'No publications are available yet.'}
                             </p>
                         )}
                         {publications.map(pub => (
-                            <div key={pub.id} style={{
+                            <article id={`publication-${pub.id}`} key={pub.id} style={{
                                 backgroundColor: '#fff', padding: '20px', borderRadius: '8px',
                                 border: '1px solid #e2e8f0', boxShadow: '0 1px 3px rgba(0,0,0,0.04)'
                             }}>
@@ -451,17 +641,7 @@ export default function Publications({ user }) {
                                         <div style={{ display: 'flex', gap: '8px' }}>
                                             {!pub.is_approved && pub.review_status !== 'APPROVED' && (
                                                 <>
-                                                    <button title="Edit publication" aria-label="Edit publication" onClick={() => {
-                                                        setEditingId(pub.id);
-                                                        setTitle(pub.title);
-                                                        setAbstract(pub.abstract);
-                                                        setPubType(pub.pub_type);
-                                                        setSubject(pub.subject_area);
-                                                        setSelectedAuthors(pub.authors_details || []);
-                                                        setSupervisorId(pub.supervisor_id ? String(pub.supervisor_id) : '');
-                                                        setCoSupervisorId(pub.co_supervisor_id ? String(pub.co_supervisor_id) : '');
-                                                        setShowSubmissionForm(true);
-                                                    }} style={iconButtonStyle}><Pencil size={17} aria-hidden="true" /></button>
+                                                    <button title="Edit publication" aria-label="Edit publication" onClick={() => startEditing(pub)} style={iconButtonStyle}><Pencil size={17} aria-hidden="true" /></button>
                                                     <button type="button" title="Request publication deletion" aria-label="Request publication deletion" disabled={pendingAction === `delete-${pub.id}`} onClick={() => handleDeletionRequest(pub)} style={{ ...iconButtonStyle, color: '#b91c1c', cursor: pendingAction === `delete-${pub.id}` ? 'wait' : 'pointer' }}>{pendingAction === `delete-${pub.id}` ? <LoaderCircle size={17} className="publication-spinner" aria-hidden="true" /> : <Trash2 size={17} aria-hidden="true" />}</button>
                                                 </>
                                             )}
@@ -484,7 +664,7 @@ export default function Publications({ user }) {
                                         <strong>Supervisor feedback:</strong> {pub.review_feedback}
                                     </div>
                                 )}
-                            </div>
+                            </article>
                         ))}
                     </div>
                 </div>
@@ -663,7 +843,12 @@ export default function Publications({ user }) {
      return error?.message || fallback;
  };
  const formInputStyle = { width: '100%', padding: '10px 12px', borderRadius: '6px', border: '1px solid #cbd5e1', backgroundColor: '#f8fafc', fontSize: '0.9rem', color: '#1e293b', boxSizing: 'border-box' };
-const iconButtonStyle = { display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '4px', padding: '7px', border: '1px solid #cbd5e1', borderRadius: '5px', background: '#fff', color: '#475569', cursor: 'pointer' };
+ const filterInputStyle = { width: '100%', marginTop: '5px', padding: '9px 10px', borderRadius: '5px', border: '1px solid #cbd5e1', backgroundColor: '#fff', fontSize: '.86rem', color: '#1e293b', boxSizing: 'border-box' };
+ const filterInputLabelStyle = { display: 'block', color: '#475569', fontSize: '.8rem', fontWeight: 600 };
+ const filterOptionsStyle = { display: 'flex', flexWrap: 'wrap', gap: '8px 16px' };
+ const filterLabelStyle = { display: 'inline-flex', alignItems: 'center', gap: '6px', color: '#334155', fontSize: '.83rem', cursor: 'pointer' };
+ const highlightIconButtonStyle = { display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '4px', padding: '7px', border: '1px solid rgba(255, 255, 255, 0.35)', borderRadius: '5px', background: 'rgba(255, 255, 255, 0.12)', color: '#f8fafc', cursor: 'pointer' };
+ const iconButtonStyle = { display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '4px', padding: '7px', border: '1px solid #cbd5e1', borderRadius: '5px', background: '#fff', color: '#475569', cursor: 'pointer' };
 const submissionButtonStyle = { display: 'inline-flex', flex: '0 0 auto', alignItems: 'center', gap: '7px', padding: '9px 13px', border: 0, borderRadius: '6px', background: '#0369a1', color: '#fff', fontWeight: 700, fontSize: '0.82rem', cursor: 'pointer', boxShadow: '0 2px 5px rgba(3, 105, 161, 0.2)' };
 const submissionBackdropStyle = { position: 'fixed', inset: 0, zIndex: 30, display: 'grid', placeItems: 'center', overflowY: 'auto', padding: '16px', boxSizing: 'border-box', background: 'rgba(15, 23, 42, 0.48)' };
 const submissionPanelStyle = { display: 'grid', gridTemplateRows: 'auto minmax(0, 1fr)', gap: '18px', width: 'min(100%, 720px)', maxHeight: 'calc(100dvh - 32px)', minHeight: 0, padding: 'clamp(16px, 4vw, 24px)', border: '1px solid #dbe3ec', borderRadius: '12px', background: '#fff', boxShadow: '0 24px 70px rgba(15, 23, 42, 0.3)', boxSizing: 'border-box' };

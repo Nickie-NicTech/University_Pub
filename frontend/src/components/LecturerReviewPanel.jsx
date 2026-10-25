@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { ArrowLeft, Check, Download, Eye, FileText, LoaderCircle, ShieldCheck, X } from 'lucide-react';
 import API from '../api';
 
@@ -15,11 +15,12 @@ export default function LecturerReviewPanel({ user }) {
     const [previewLoadingId, setPreviewLoadingId] = useState(null);
     const objectUrls = useRef(new Set());
     const navigate = useNavigate();
+    const [searchParams, setSearchParams] = useSearchParams();
 
     const loadAssignments = useCallback(async (showLoader = true) => {
         if (showLoader) setLoading(true);
         try {
-            const { data } = await API.get('publications/');
+            const { data } = await API.get('publications/?review_assignments=true');
             if (!Array.isArray(data)) throw new Error('The review assignment response was not a list.');
             setPublications(data.filter((publication) => publication.review_invitation_status));
             setError('');
@@ -32,9 +33,27 @@ export default function LecturerReviewPanel({ user }) {
     }, []);
 
     useEffect(() => {
+        const publicationId = searchParams.get('publication');
+        if (!publicationId || loading) return;
+
+        const publication = publications.find((item) => String(item.id) === publicationId);
+        if (publication) {
+            const card = document.getElementById(`publication-${publication.id}`);
+            card?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+            card?.focus({ preventScroll: true });
+        } else {
+            return;
+        }
+
+        const nextParams = new URLSearchParams(searchParams);
+        nextParams.delete('publication');
+        setSearchParams(nextParams, { replace: true });
+    }, [loading, publications, searchParams, setSearchParams]);
+
+    useEffect(() => {
         let isCurrentRequest = true;
         const urls = objectUrls.current;
-        API.get('publications/')
+        API.get('publications/?review_assignments=true')
             .then(({ data }) => {
                 if (!isCurrentRequest) return;
                 if (!Array.isArray(data)) throw new Error('The review assignment response was not a list.');
@@ -184,6 +203,10 @@ export default function LecturerReviewPanel({ user }) {
                 </div>
             )}
 
+            {!loading && !error && searchParams.get('publication') && !publications.some((publication) => String(publication.id) === searchParams.get('publication')) && (
+                <p role="alert" style={{ ...messageStyle, color: '#b91c1c', background: '#fef2f2' }}>This publication is no longer assigned to your review desk.</p>
+            )}
+
             {!loading && !error && publications.length > 0 && (
                 <>
                     <div style={noticeStyle}>
@@ -203,7 +226,7 @@ export default function LecturerReviewPanel({ user }) {
                         </ReviewSection>
                     )}
                     {acceptedReviews.length > 0 && (
-                        <ReviewSection title="Accepted reviews" description="Your review controls are available once all invited reviewers have responded." count={acceptedReviews.length}>
+                        <ReviewSection title="Accepted reviews" description="You can review immediately after accepting; publication decisions are finalized after all invited reviewers respond." count={acceptedReviews.length}>
                             {acceptedReviews.map((publication) => {
                                 const ready = publication.review_status === 'PENDING';
                                 return (
@@ -264,7 +287,7 @@ function ReviewSection({ title, description, count, children }) {
 
 function ReviewCard({ publication, currentReviewerId, previewUrl, previewLoading, pendingAction, onPreview, onDownload, children }) {
     const myInvitation = publication.review_invitations?.find((invitation) => invitation.reviewer === currentReviewerId);
-    return <article style={cardStyle}>
+    return <article id={`publication-${publication.id}`} tabIndex={-1} style={cardStyle}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 16, flexWrap: 'wrap' }}>
             <div style={{ flex: '1 1 320px', minWidth: 0 }}>
                 <span style={eyebrowStyle}>{publication.pub_type} · {publication.subject_area}</span>

@@ -29,6 +29,39 @@ class TokenClaimsTests(TestCase):
         self.assertEqual(token['role'], 'STUDENT')
         self.assertTrue(UserProfile.objects.filter(user=user).exists())
 
+
+class JwtLifetimeTests(APITestCase):
+    def test_access_token_lifetime_is_thirty_minutes(self):
+        User.objects.create_user(username='jwt-lifetime-user', password='test-password')
+
+        response = self.client.post(
+            reverse('token_obtain_pair'),
+            {'username': 'jwt-lifetime-user', 'password': 'test-password'},
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        access_token = AccessToken(response.data['access'])
+        self.assertEqual(access_token['exp'] - access_token['iat'], 30 * 60)
+
+    def test_refresh_endpoint_issues_a_new_access_token(self):
+        User.objects.create_user(username='jwt-refresh-user', password='test-password')
+        tokens = self.client.post(
+            reverse('token_obtain_pair'),
+            {'username': 'jwt-refresh-user', 'password': 'test-password'},
+            format='json',
+        )
+
+        refreshed = self.client.post(
+            reverse('token_refresh'),
+            {'refresh': tokens.data['refresh']},
+            format='json',
+        )
+
+        self.assertEqual(refreshed.status_code, status.HTTP_200_OK)
+        AccessToken(refreshed.data['access'])
+
+
 @override_settings(
     EMAIL_BACKEND='django.core.mail.backends.locmem.EmailBackend',
     DEFAULT_FROM_EMAIL='unipub@example.com',
@@ -338,6 +371,119 @@ class PublicationTests(APITestCase):
         reviewer_results = self.client.get(reverse('publication-list'), {'search': 'paper'})
         self.assertEqual({item['id'] for item in reviewer_results.data}, {approved.id, pending.id})
 
+    def test_publication_search_supports_field_type_author_and_subject_filters(self):
+        owner, _ = self.create_member('search-owner')
+        author = AuthorProfile.objects.create(first_name='Ada', last_name='Hopper')
+        matching = Publication.objects.create(
+            title='Distributed systems',
+            owner=owner,
+            abstract='Research on reliable processing.',
+            pub_type='CONFERENCE',
+            subject_area='Computer Science',
+            is_approved=True,
+        )
+        matching.authors.add(author)
+        other = Publication.objects.create(
+            title='Ada Lovelace biography',
+            owner=owner,
+            abstract='A history paper.',
+            pub_type='JOURNAL',
+            subject_area='History',
+            is_approved=True,
+        )
+        other.authors.add(AuthorProfile.objects.create(first_name='Grace', last_name='Hopper'))
+        self.client.force_authenticate(user=owner)
+
+        author_search = self.client.get(
+            reverse('publication-list'),
+            {'search': 'Ada', 'search_in': 'author'},
+        )
+        self.assertEqual([record['id'] for record in author_search.data], [matching.id])
+
+        default_field_search = self.client.get(
+            reverse('publication-list'),
+            {'search': 'reliable'},
+        )
+        self.assertEqual([record['id'] for record in default_field_search.data], [matching.id])
+
+        title_search = self.client.get(
+            reverse('publication-list'),
+            {'search': 'Ada', 'search_in': 'title'},
+        )
+        self.assertEqual([record['id'] for record in title_search.data], [other.id])
+
+        no_fields_selected = self.client.get(
+            reverse('publication-list'),
+            [('search', 'Ada'), ('search_in', 'none')],
+        )
+        self.assertEqual(no_fields_selected.data, [])
+
+        type_filter = self.client.get(
+            reverse('publication-list'),
+            {'pub_type': 'CONFERENCE'},
+        )
+        self.assertEqual([record['id'] for record in type_filter.data], [matching.id])
+
+        author_filter = self.client.get(
+            reverse('publication-list'),
+            {'author': 'Grace'},
+        )
+        self.assertEqual([record['id'] for record in author_filter.data], [other.id])
+
+        subject_filter = self.client.get(
+            reverse('publication-list'),
+            {'subject_area': 'History'},
+        )
+        self.assertEqual([record['id'] for record in subject_filter.data], [other.id])
+
+        filtered = self.client.get(
+            reverse('publication-list'),
+            [('pub_type', 'CONFERENCE'), ('pub_type', 'JOURNAL'), ('author', 'Hopper'), ('subject_area', 'Computer')],
+        )
+        self.assertEqual({record['id'] for record in filtered.data}, {matching.id})
+
+    def test_authenticated_repository_defaults_to_personal_items_and_searches_repository(self):
+        member, _ = self.create_member('personal-repository-user')
+        other_owner, _ = self.create_member('other-repository-owner')
+        personal = Publication.objects.create(
+            title='My private draft',
+            owner=member,
+            abstract='Personal draft abstract',
+            pub_type='JOURNAL',
+            subject_area='Computing',
+        )
+        lecturer, _ = self.create_supervisor('review-assignment-lecturer')
+        assigned_for_review = self.create_review_publication(
+            other_owner,
+            lecturer,
+            title='Assigned review request',
+        )
+        public = Publication.objects.create(
+            title='Shared catalog paper',
+            owner=other_owner,
+            abstract='An approved repository record',
+            pub_type='JOURNAL',
+            subject_area='Computing',
+            is_approved=True,
+        )
+        self.client.force_authenticate(user=member)
+
+        personal_results = self.client.get(reverse('publication-list'))
+        self.assertEqual([item['id'] for item in personal_results.data], [personal.id])
+
+        highlights = self.client.get(reverse('publication-list'), {'highlights': 'true'})
+        self.assertEqual([item['id'] for item in highlights.data], [public.id])
+
+        searched = self.client.get(reverse('publication-list'), {'search': 'catalog'})
+        self.assertEqual([item['id'] for item in searched.data], [public.id])
+
+        self.client.force_authenticate(user=lecturer)
+        review_assignments = self.client.get(
+            reverse('publication-list'),
+            {'review_assignments': 'true'},
+        )
+        self.assertEqual([item['id'] for item in review_assignments.data], [assigned_for_review.id])
+
     def test_reviewers_accept_independently_and_all_accepted_reviews_are_required(self):
         supervisor, _ = self.create_supervisor('approval-supervisor')
         co_supervisor, _ = self.create_supervisor('approval-co-supervisor')
@@ -358,6 +504,8 @@ class PublicationTests(APITestCase):
         )
         self.assertEqual(response.status_code, status.HTTP_201_CREATED, response.data)
         publication_id = response.data['id']
+        invitation_notice = UserNotification.objects.get(user=supervisor)
+        self.assertEqual(invitation_notice.link, f'/lecturer/reviews?publication={publication_id}')
 
         self.client.force_authenticate(user=reader)
         denied = self.client.post(
@@ -368,31 +516,87 @@ class PublicationTests(APITestCase):
         self.assertEqual(denied.status_code, status.HTTP_404_NOT_FOUND)
 
         self.client.force_authenticate(user=supervisor)
-        self.assertEqual(self.client.post(
+        supervisor_accepted = self.client.post(
             reverse('publication-review-invitation', args=[publication_id]),
             {'decision': 'ACCEPTED'}, format='json',
-        ).status_code, status.HTTP_200_OK)
+        )
+        self.assertEqual(supervisor_accepted.status_code, status.HTTP_200_OK)
+        first_approval = self.client.post(
+            reverse('publication-review-decision', args=[publication_id]),
+            {'decision': 'APPROVED'},
+            format='json',
+        )
+        self.assertEqual(first_approval.status_code, status.HTTP_200_OK, first_approval.data)
+        self.assertFalse(first_approval.data['is_approved'])
+
         self.client.force_authenticate(user=co_supervisor)
         accepted = self.client.post(
             reverse('publication-review-invitation', args=[publication_id]),
             {'decision': 'ACCEPTED'}, format='json',
         )
         self.assertEqual(accepted.status_code, status.HTTP_200_OK, accepted.data)
-        approved = self.client.post(
-            reverse('publication-review-decision', args=[publication_id]),
-            {'decision': 'APPROVED'}, format='json',
+        self.assertEqual(accepted.data['review_status'], 'PENDING')
+        self.assertEqual(
+            UserNotification.objects.filter(user=owner).latest('created_at').link,
+            f'/?publication={publication_id}',
         )
-        self.assertEqual(approved.status_code, status.HTTP_200_OK, approved.data)
-        self.assertFalse(approved.data['is_approved'])
-
-        self.client.force_authenticate(user=supervisor)
         approved = self.client.post(
             reverse('publication-review-decision', args=[publication_id]),
             {'decision': 'APPROVED'}, format='json',
         )
         self.assertEqual(approved.status_code, status.HTTP_200_OK, approved.data)
         self.assertTrue(approved.data['is_approved'])
-        self.assertTrue(UserNotification.objects.filter(user=owner, title__startswith='Publication approved').exists())
+        approval_notice = UserNotification.objects.get(user=owner, title__startswith='Publication approved')
+        self.assertEqual(approval_notice.link, f'/?publication={publication_id}')
+
+    def test_accepted_reviewer_can_approve_while_other_invitation_is_pending(self):
+        supervisor, _ = self.create_supervisor('declined-review-supervisor')
+        co_supervisor, _ = self.create_supervisor('declined-review-co-supervisor')
+        owner, _ = self.create_member('declined-review-owner')
+        self.client.force_authenticate(user=owner)
+        response = self.client.post(
+            reverse('publication-list'),
+            {
+                'title': 'Single accepting reviewer paper',
+                'abstract': 'Abstract',
+                'pub_type': 'JOURNAL',
+                'subject_area': 'Computing',
+                'supervisor': supervisor.id,
+                'co_supervisor': co_supervisor.id,
+            },
+            format='json',
+        )
+        publication_id = response.data['id']
+
+        self.client.force_authenticate(user=supervisor)
+        accepted = self.client.post(
+            reverse('publication-review-invitation', args=[publication_id]),
+            {'decision': 'ACCEPTED'},
+            format='json',
+        )
+        self.assertEqual(accepted.data['review_status'], 'PENDING')
+        approved = self.client.post(
+            reverse('publication-review-decision', args=[publication_id]),
+            {'decision': 'APPROVED'},
+            format='json',
+        )
+        self.assertEqual(approved.status_code, status.HTTP_200_OK, approved.data)
+        self.assertFalse(approved.data['is_approved'])
+
+        self.client.force_authenticate(user=co_supervisor)
+        declined = self.client.post(
+            reverse('publication-review-invitation', args=[publication_id]),
+            {'decision': 'DECLINED'},
+            format='json',
+        )
+        self.assertEqual(declined.status_code, status.HTTP_200_OK, declined.data)
+        self.assertEqual(declined.data['review_status'], 'APPROVED')
+        self.assertTrue(declined.data['is_approved'])
+        approval_notice = UserNotification.objects.get(
+            user=owner,
+            title=f'Publication approved: {declined.data["title"]}',
+        )
+        self.assertEqual(approval_notice.link, f'/?publication={publication_id}')
 
     def test_reviewers_can_request_revisions_then_owner_resubmits(self):
         reviewer, _ = self.create_supervisor('revision-supervisor')
@@ -424,6 +628,8 @@ class PublicationTests(APITestCase):
         )
         self.assertEqual(revision_request.status_code, status.HTTP_200_OK, revision_request.data)
         self.assertEqual(revision_request.data['review_status'], 'REVISION_REQUESTED')
+        revision_notice = UserNotification.objects.get(user=owner, title__startswith='Revisions requested')
+        self.assertEqual(revision_notice.link, f'/?publication={publication_id}')
 
         self.client.force_authenticate(user=owner)
         updated = self.client.patch(
