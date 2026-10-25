@@ -74,6 +74,8 @@ class PublicationTests(APITestCase):
             email=f'{username}@example.com',
         )
         profile = UserProfile.objects.create(user=user, role='LECTURER', department='Computing')
+        ReviewerSubjectArea.objects.get_or_create(reviewer=user, subject_area='Computing')
+        ReviewerSubjectArea.objects.get_or_create(reviewer=user, subject_area='Computer Science')
         return user, profile
 
     def create_member(self, username, supervisor=None, role='STUDENT'):
@@ -131,12 +133,12 @@ class PublicationTests(APITestCase):
         other_lecturer, _ = self.create_supervisor('other-subject-lecturer')
         ReviewerSubjectArea.objects.create(
             reviewer=matching_lecturer,
-            subject_area='Computer Science',
+            subject_area='Neuroscience',
         )
 
         response = self.client.get(
             reverse('supervisor_list'),
-            {'subject_area': 'computer science'},
+            {'subject_area': 'neuroscience'},
         )
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
@@ -144,6 +146,204 @@ class PublicationTests(APITestCase):
         self.assertTrue(response.data[0]['is_subject_match'])
         other = next(item for item in response.data if item['user_id'] == other_lecturer.id)
         self.assertFalse(other['is_subject_match'])
+
+    def test_publication_creation_automatically_assigns_subject_mapped_supervisors(self):
+        supervisor, _ = self.create_supervisor('auto-supervisor')
+        co_supervisor, _ = self.create_supervisor('auto-co-supervisor')
+        owner, _ = self.create_member('auto-supervisor-owner')
+        ReviewerSubjectArea.objects.create(reviewer=supervisor, subject_area='Neuroscience')
+        ReviewerSubjectArea.objects.create(reviewer=co_supervisor, subject_area='Neuroscience')
+        self.client.force_authenticate(user=owner)
+
+        response = self.client.post(
+            reverse('publication-list'),
+            {
+                'title': 'Automatically assigned paper',
+                'abstract': 'Abstract',
+                'pub_type': 'JOURNAL',
+                'subject_area': 'neuroscience',
+            },
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED, response.data)
+        self.assertEqual(response.data['supervisor_id'], supervisor.id)
+        self.assertEqual(response.data['co_supervisor_id'], co_supervisor.id)
+
+    def test_publication_creation_requires_a_subject_mapped_supervisor(self):
+        owner, _ = self.create_member('unmapped-subject-owner')
+        self.client.force_authenticate(user=owner)
+
+        response = self.client.post(
+            reverse('publication-list'),
+            {
+                'title': 'Unmapped paper',
+                'abstract': 'Abstract',
+                'pub_type': 'JOURNAL',
+                'subject_area': 'Unmapped subject',
+            },
+            format='json',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('subject_area', response.data)
+
+    def test_owner_can_reassign_unanswered_mapped_supervisor_while_editing(self):
+        mapped_supervisor, _ = self.create_supervisor('unanswered-mapped-supervisor')
+        replacement_supervisor, _ = self.create_supervisor('unanswered-replacement-supervisor')
+        owner, _ = self.create_member('unanswered-assignment-owner')
+        ReviewerSubjectArea.objects.create(reviewer=mapped_supervisor, subject_area='Astrophysics')
+        self.client.force_authenticate(user=owner)
+        created = self.client.post(
+            reverse('publication-list'),
+            {
+                'title': 'Unanswered review assignment',
+                'abstract': 'Abstract',
+                'pub_type': 'JOURNAL',
+                'subject_area': 'Astrophysics',
+            },
+            format='json',
+        )
+        self.assertEqual(created.status_code, status.HTTP_201_CREATED, created.data)
+
+        updated = self.client.patch(
+            reverse('publication-detail', args=[created.data['id']]),
+            {'supervisor': replacement_supervisor.id},
+            format='json',
+        )
+
+        self.assertEqual(updated.status_code, status.HTTP_200_OK, updated.data)
+        self.assertEqual(updated.data['supervisor_id'], replacement_supervisor.id)
+        self.assertFalse(PublicationReviewInvitation.objects.filter(
+            publication_id=created.data['id'],
+            reviewer=mapped_supervisor,
+        ).exists())
+
+    def test_owner_can_replace_declined_supervisor_invitation(self):
+        declined_supervisor, _ = self.create_supervisor('declined-mapped-supervisor')
+        replacement_supervisor, _ = self.create_supervisor('declined-replacement-supervisor')
+        owner, _ = self.create_member('declined-assignment-owner')
+        ReviewerSubjectArea.objects.create(reviewer=declined_supervisor, subject_area='Astrophysics')
+        self.client.force_authenticate(user=owner)
+        created = self.client.post(
+            reverse('publication-list'),
+            {
+                'title': 'Declined review assignment',
+                'abstract': 'Abstract',
+                'pub_type': 'JOURNAL',
+                'subject_area': 'Astrophysics',
+            },
+            format='json',
+        )
+        publication_id = created.data['id']
+        self.client.force_authenticate(user=declined_supervisor)
+        declined = self.client.post(
+            reverse('publication-review-invitation', args=[publication_id]),
+            {'decision': 'DECLINED'},
+            format='json',
+        )
+        self.assertEqual(declined.status_code, status.HTTP_200_OK)
+
+        self.client.force_authenticate(user=owner)
+        updated = self.client.patch(
+            reverse('publication-detail', args=[publication_id]),
+            {'supervisor': replacement_supervisor.id},
+            format='json',
+        )
+
+        self.assertEqual(updated.status_code, status.HTTP_200_OK, updated.data)
+        self.assertEqual(updated.data['supervisor_id'], replacement_supervisor.id)
+        new_invitation = PublicationReviewInvitation.objects.get(
+            publication_id=publication_id,
+            reviewer=replacement_supervisor,
+        )
+        self.assertEqual(new_invitation.status, 'INVITED')
+
+    def test_owner_cannot_replace_unanswered_reviewer_after_another_declines(self):
+        supervisor, _ = self.create_supervisor('still-invited-supervisor')
+        co_supervisor, _ = self.create_supervisor('already-declined-co-supervisor')
+        replacement_supervisor, _ = self.create_supervisor('blocked-replacement-supervisor')
+        owner, _ = self.create_member('partially-responded-owner')
+        ReviewerSubjectArea.objects.create(reviewer=supervisor, subject_area='Astrophysics')
+        ReviewerSubjectArea.objects.create(reviewer=co_supervisor, subject_area='Astrophysics')
+        self.client.force_authenticate(user=owner)
+        created = self.client.post(
+            reverse('publication-list'),
+            {
+                'title': 'Partially responded assignment',
+                'abstract': 'Abstract',
+                'pub_type': 'JOURNAL',
+                'subject_area': 'Astrophysics',
+            },
+            format='json',
+        )
+        publication_id = created.data['id']
+
+        self.client.force_authenticate(user=co_supervisor)
+        declined = self.client.post(
+            reverse('publication-review-invitation', args=[publication_id]),
+            {'decision': 'DECLINED'},
+            format='json',
+        )
+        self.assertEqual(declined.status_code, status.HTTP_200_OK)
+
+        self.client.force_authenticate(user=owner)
+        updated = self.client.patch(
+            reverse('publication-detail', args=[publication_id]),
+            {'supervisor': replacement_supervisor.id},
+            format='json',
+        )
+
+        self.assertEqual(updated.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(
+            PublicationReviewInvitation.objects.get(
+                publication_id=publication_id,
+                role='SUPERVISOR',
+            ).reviewer_id,
+            supervisor.id,
+        )
+
+    def test_owner_cannot_replace_a_reviewer_after_acceptance(self):
+        supervisor, _ = self.create_supervisor('accepted-assignment-supervisor')
+        replacement_supervisor, _ = self.create_supervisor('accepted-replacement-supervisor')
+        owner, _ = self.create_member('accepted-assignment-owner')
+        ReviewerSubjectArea.objects.create(reviewer=supervisor, subject_area='Astrophysics')
+        self.client.force_authenticate(user=owner)
+        created = self.client.post(
+            reverse('publication-list'),
+            {
+                'title': 'Accepted review assignment',
+                'abstract': 'Abstract',
+                'pub_type': 'JOURNAL',
+                'subject_area': 'Astrophysics',
+            },
+            format='json',
+        )
+        publication_id = created.data['id']
+
+        self.client.force_authenticate(user=supervisor)
+        accepted = self.client.post(
+            reverse('publication-review-invitation', args=[publication_id]),
+            {'decision': 'ACCEPTED'},
+            format='json',
+        )
+        self.assertEqual(accepted.status_code, status.HTTP_200_OK)
+
+        self.client.force_authenticate(user=owner)
+        updated = self.client.patch(
+            reverse('publication-detail', args=[publication_id]),
+            {'supervisor': replacement_supervisor.id},
+            format='json',
+        )
+
+        self.assertEqual(updated.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(
+            PublicationReviewInvitation.objects.get(
+                publication_id=publication_id,
+                role='SUPERVISOR',
+            ).reviewer_id,
+            supervisor.id,
+        )
 
     def test_registration_rejects_wrong_role_and_already_claimed_directory_id(self):
         entry = UniversityDirectoryEntry.objects.create(

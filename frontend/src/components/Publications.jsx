@@ -21,6 +21,7 @@ export default function Publications({ user }) {
     const [authorFilter, setAuthorFilter] = useState('');
     const [subjectFilter, setSubjectFilter] = useState('');
     const [editingId, setEditingId] = useState(null);
+    const [editingPublication, setEditingPublication] = useState(null);
     const [showSubmissionForm, setShowSubmissionForm] = useState(false);
     
     // Core Form Hooks
@@ -91,6 +92,7 @@ export default function Publications({ user }) {
 
     const clearForm = () => {
         setEditingId(null);
+        setEditingPublication(null);
         setTitle('');
         setAbstract('');
         setPubType('JOURNAL');
@@ -103,6 +105,7 @@ export default function Publications({ user }) {
 
     const startEditing = (publication) => {
         setEditingId(publication.id);
+        setEditingPublication(publication);
         setTitle(publication.title);
         setAbstract(publication.abstract);
         setPubType(publication.pub_type);
@@ -167,6 +170,24 @@ export default function Publications({ user }) {
     const hasSearchFilters = Boolean(
         search.trim() || publicationTypes.length || authorFilter.trim() || subjectFilter.trim()
     );
+    const mappedSupervisors = supervisors.filter((lecturer) => lecturer.is_subject_match);
+    const reviewInvitations = editingPublication?.review_invitations || [];
+    const noReviewersResponded = reviewInvitations.length > 0
+        && reviewInvitations.every((invitation) => invitation.status === 'INVITED');
+    const canChangeSupervisor = reviewInvitations.some(
+        (invitation) => invitation.role === 'SUPERVISOR'
+            && (invitation.status === 'DECLINED' || (invitation.status === 'INVITED' && noReviewersResponded))
+    );
+    const canChangeCoSupervisor = reviewInvitations.some(
+        (invitation) => invitation.role === 'CO_SUPERVISOR'
+            && (invitation.status === 'DECLINED' || (invitation.status === 'INVITED' && noReviewersResponded))
+    );
+    const supervisorInvitation = editingPublication?.review_invitations?.find(
+        (invitation) => invitation.role === 'SUPERVISOR'
+    );
+    const coSupervisorInvitation = editingPublication?.review_invitations?.find(
+        (invitation) => invitation.role === 'CO_SUPERVISOR'
+    );
 
     useEffect(() => {
         if (!canWrite) return;
@@ -184,6 +205,10 @@ export default function Publications({ user }) {
                 const matchingSupervisor = lecturers.find((lecturer) => lecturer.is_subject_match);
                 if (matchingSupervisor && !editingId) {
                     setSupervisorId(String(matchingSupervisor.user_id));
+                    const matchingCoSupervisor = lecturers.find(
+                        (lecturer) => lecturer.is_subject_match && lecturer.user_id !== matchingSupervisor.user_id
+                    );
+                    setCoSupervisorId(matchingCoSupervisor ? String(matchingCoSupervisor.user_id) : '');
                 }
             })
             .catch((err) => {
@@ -323,8 +348,8 @@ export default function Publications({ user }) {
         formData.append('abstract', abstract);
         formData.append('pub_type', pubType);
         formData.append('subject_area', subject);
-        formData.append('supervisor', supervisorId);
-        formData.append('co_supervisor', coSupervisorId);
+        if (editingId && canChangeSupervisor) formData.append('supervisor', supervisorId);
+        if (editingId && canChangeCoSupervisor) formData.append('co_supervisor', coSupervisorId);
         selectedAuthors.forEach((author) => formData.append('authors', author.id));
         if (file) formData.append('file_attachment', file);
 
@@ -700,28 +725,58 @@ export default function Publications({ user }) {
                         </div>
                         {selectedAuthors.length > 0 && <p style={{ margin: '-8px 0 0', color: '#475569', fontSize: '0.8rem' }}>Authors: {selectedAuthors.map((author) => author.name || `${author.first_name} ${author.last_name}`).join('; ')}</p>}
                         <div>
-                            <label htmlFor="publication-reviewer" style={labelStyle}>Lecturer supervisor (required)</label>
-                            {supervisorLoading ? (
-                                <p role="status" style={{ color: '#64748b', fontSize: '0.85rem' }}><LoaderCircle size={15} className="publication-spinner" aria-hidden="true" /> Loading supervisor…</p>
+                            <label htmlFor="publication-subject" style={labelStyle}>Subject Area (required)</label>
+                            <input id="publication-subject" type="text" value={subject} onChange={e => setSubject(e.target.value)} required style={formInputStyle}/>
+                        </div>
+                        <div>
+                            {editingId && (canChangeSupervisor || canChangeCoSupervisor) ? (
+                                <>
+                                    <p style={{ ...labelStyle, margin: '0 0 6px' }}>Reviewer assignments</p>
+                                    {canChangeSupervisor && (
+                                        <>
+                                            <label htmlFor="publication-reviewer" style={labelStyle}>Lecturer supervisor (required)</label>
+                                            <select id="publication-reviewer" value={supervisorId} onChange={(event) => setSupervisorId(event.target.value)} required style={formInputStyle}>
+                                                <option value="">Select a lecturer supervisor</option>
+                                                {supervisors.map((lecturer) => <option key={lecturer.user_id} value={lecturer.user_id}>{lecturer.name} — {lecturer.department}</option>)}
+                                            </select>
+                                            <p style={{ margin: '4px 0 10px', color: '#64748b', fontSize: '.78rem' }}>
+                                                The current supervisor {supervisorInvitation?.status === 'DECLINED' ? 'declined the invitation' : 'has not responded'}; you may reassign this role.
+                                            </p>
+                                        </>
+                                    )}
+                                    {canChangeCoSupervisor && (
+                                        <>
+                                            <label htmlFor="publication-co-supervisor" style={labelStyle}>Co-supervisor (optional)</label>
+                                            <select id="publication-co-supervisor" value={coSupervisorId} onChange={(event) => setCoSupervisorId(event.target.value)} style={formInputStyle}>
+                                                <option value="">No co-supervisor</option>
+                                                {supervisors.filter((lecturer) => String(lecturer.user_id) !== supervisorId).map((lecturer) => <option key={lecturer.user_id} value={lecturer.user_id}>{lecturer.name} — {lecturer.department}</option>)}
+                                            </select>
+                                            <p style={{ margin: '4px 0 10px', color: '#64748b', fontSize: '.78rem' }}>
+                                                The current co-supervisor {coSupervisorInvitation?.status === 'DECLINED' ? 'declined the invitation' : 'has not responded'}; you may reassign this role.
+                                            </p>
+                                        </>
+                                    )}
+                                </>
+                            ) : editingId ? (
+                                <p style={{ margin: 0, color: '#475569', fontSize: '.85rem' }}>
+                                    Reviewers have responded or accepted their invitations. Reviewer assignments are locked while review is in progress.
+                                </p>
+                            ) : supervisorLoading ? (
+                                <p role="status" style={{ color: '#64748b', fontSize: '0.85rem' }}><LoaderCircle size={15} className="publication-spinner" aria-hidden="true" /> Finding subject-matched supervisors…</p>
                             ) : supervisorError ? (
                                 <p role="alert" style={{ color: '#b91c1c', fontSize: '0.85rem' }}>{supervisorError}</p>
-                            ) : supervisors.length > 0 ? (
-                                <>
-                                <select id="publication-reviewer" value={supervisorId} onChange={(event) => setSupervisorId(event.target.value)} required style={formInputStyle}>
-                                    <option value="">Select a lecturer supervisor</option>
-                                    {supervisors.map((lecturer) => <option key={lecturer.user_id} value={lecturer.user_id}>{lecturer.name} — {lecturer.department}{lecturer.is_subject_match ? ' (subject match)' : ''}</option>)}
-                                </select>
-                                <label htmlFor="publication-co-supervisor" style={{ ...labelStyle, marginTop: '10px' }}>Co-supervisor (optional)</label>
-                                <select id="publication-co-supervisor" value={coSupervisorId} onChange={(event) => setCoSupervisorId(event.target.value)} style={formInputStyle}>
-                                    <option value="">No co-supervisor</option>
-                                    {supervisors.filter((lecturer) => String(lecturer.user_id) !== supervisorId).map((lecturer) => <option key={lecturer.user_id} value={lecturer.user_id}>{lecturer.name} — {lecturer.department}</option>)}
-                                </select>
-                                </>
+                            ) : mappedSupervisors.length > 0 ? (
+                                <div role="status" style={{ padding: '10px 12px', border: '1px solid #bae6fd', borderRadius: 6, background: '#f0f9ff', color: '#075985', fontSize: '.85rem' }}>
+                                    <strong>Supervisors assigned automatically from this subject area</strong>
+                                    <div style={{ marginTop: 5 }}>Supervisor: {mappedSupervisors[0].name} — {mappedSupervisors[0].department}</div>
+                                    {mappedSupervisors[1] && <div style={{ marginTop: 3 }}>Co-supervisor: {mappedSupervisors[1].name} — {mappedSupervisors[1].department}</div>}
+                                </div>
                             ) : (
-                                <p role="alert" style={{ color: '#b91c1c', fontSize: '0.85rem' }}>No active lecturers are available to review this publication.</p>
+                                <p role="alert" style={{ margin: 0, color: '#b91c1c', fontSize: '0.85rem' }}>
+                                    No supervisor is mapped to this subject area. Contact an administrator to configure the subject mapping before submitting.
+                                </p>
                             )}
                         </div>
-                        <div><label htmlFor="publication-subject" style={labelStyle}>Subject Area (required)</label><input id="publication-subject" type="text" value={subject} onChange={e => setSubject(e.target.value)} required style={formInputStyle}/></div>
                         <div>
                             <label htmlFor="publication-abstract" style={labelStyle}>Abstract Description (required)</label>
                             <textarea id="publication-abstract" value={abstract} onChange={e => setAbstract(e.target.value)} required style={{ ...formInputStyle, height: '100px', resize: 'vertical' }}></textarea>
@@ -740,7 +795,7 @@ export default function Publications({ user }) {
                             <input id="publication-file" type="file" accept=".pdf" onChange={e => setFile(e.target.files[0])} style={formInputStyle}/>
                         </div>
                         <div style={{ display: 'flex', gap: '12px' }}>
-                            <button type="submit" disabled={publicationSaving} style={{ padding: '10px 16px', backgroundColor: '#0284c7', color: '#fff', border: 'none', borderRadius: '6px', cursor: publicationSaving ? 'wait' : 'pointer', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: '7px' }}>{publicationSaving && <LoaderCircle size={16} className="publication-spinner" aria-hidden="true" />}{publicationSaving ? 'Saving…' : editingId ? 'Update Publication' : 'Submit Publication'}</button>
+                            <button type="submit" disabled={publicationSaving || (!editingId && (supervisorLoading || Boolean(supervisorError) || mappedSupervisors.length === 0))} style={{ padding: '10px 16px', backgroundColor: '#0284c7', color: '#fff', border: 'none', borderRadius: '6px', cursor: publicationSaving ? 'wait' : 'pointer', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: '7px' }}>{publicationSaving && <LoaderCircle size={16} className="publication-spinner" aria-hidden="true" />}{publicationSaving ? 'Saving…' : editingId ? 'Update Publication' : 'Submit Publication'}</button>
                             {editingId && <button type="button" onClick={() => { clearForm(); setShowSubmissionForm(false); }} style={{ padding: '10px 16px', backgroundColor: '#e2e8f0', color: '#475569', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: 600 }}>Cancel Edit</button>}
                         </div>
                         </form>

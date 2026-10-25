@@ -1,7 +1,7 @@
 import secrets
 import logging
 from smtplib import SMTPException
-from django.db.models import Exists, OuterRef, Q, F, Sum
+from django.db.models import Exists, OuterRef, Q, F, Sum, Subquery
 from django.conf import settings
 from django.core.mail import send_mail
 from django.utils import timezone
@@ -439,17 +439,26 @@ class SupervisorListView(generics.ListAPIView):
             reviewer_id=OuterRef('user_id'),
             subject_area__iexact=subject_area,
         )
-        return UserProfile.objects.select_related('user').filter(
+        subject_mapping_order = ReviewerSubjectArea.objects.filter(
+            reviewer_id=OuterRef('user_id'),
+            subject_area__iexact=subject_area,
+        ).order_by('pk').values('pk')[:1]
+        queryset = UserProfile.objects.select_related('user').filter(
             role='LECTURER',
             user__is_active=True,
         ).annotate(
             is_subject_match=Exists(subject_matches),
+            subject_mapping_order=Subquery(subject_mapping_order),
         ).order_by(
             '-is_subject_match',
+            'subject_mapping_order',
             'user__last_name',
             'user__first_name',
             'user__username',
         )
+        if self.request.user.is_authenticated:
+            queryset = queryset.exclude(user=self.request.user)
+        return queryset
 
 
 class UserNotificationListView(generics.ListAPIView):

@@ -4,7 +4,7 @@ from django.contrib.auth.models import User
 from django.db import transaction
 import re
 from django.db.models import Sum
-from .models import Publication, PublicationReviewInvitation, AuthorProfile, UserProfile, PublicationDeletionRequest, UserNotification, BroadcastMessage, UniversityDirectoryEntry
+from .models import Publication, PublicationReviewInvitation, ReviewerSubjectArea, AuthorProfile, UserProfile, PublicationDeletionRequest, UserNotification, BroadcastMessage, UniversityDirectoryEntry
 
 class RepositoryTokenObtainPairSerializer(TokenObtainPairSerializer):
     @classmethod
@@ -119,22 +119,55 @@ class PublicationSerializer(serializers.ModelSerializer):
         request = self.context.get('request')
         supervisor = attrs.get('supervisor')
         co_supervisor = attrs.get('co_supervisor')
+        subject_area = attrs.get('subject_area', self.instance.subject_area if self.instance else '')
         if self.instance:
             current = {
                 invitation.role: invitation.reviewer
                 for invitation in self.instance.review_invitations.select_related('reviewer')
             }
-            supervisor = supervisor or current.get('SUPERVISOR')
+            invitations = {
+                invitation.role: invitation
+                for invitation in self.instance.review_invitations.all()
+            }
+            no_reviewers_responded = all(
+                invitation.status == 'INVITED'
+                for invitation in invitations.values()
+            )
+            supervisor = attrs.get('supervisor', current.get('SUPERVISOR'))
             co_supervisor = attrs.get('co_supervisor', current.get('CO_SUPERVISOR'))
-            if self.instance.review_invitations.filter(status='ACCEPTED').exists() and (
-                supervisor != current.get('SUPERVISOR')
-                or co_supervisor != current.get('CO_SUPERVISOR')
+            if subject_area != self.instance.subject_area and not any(
+                field in attrs for field in ('supervisor', 'co_supervisor')
             ):
-                raise serializers.ValidationError(
-                    'Reviewer assignments cannot be changed after an invitation has been accepted.'
-                )
-        if supervisor is None and self.instance is None:
-            raise serializers.ValidationError({'supervisor': 'Select a lecturer supervisor for this publication.'})
+                supervisor, co_supervisor = self._mapped_reviewers(subject_area, request)
+                attrs['supervisor'] = supervisor
+                attrs['co_supervisor'] = co_supervisor
+
+            for role, proposed in (
+                ('SUPERVISOR', supervisor),
+                ('CO_SUPERVISOR', co_supervisor),
+            ):
+                existing = current.get(role)
+                if proposed == existing:
+                    continue
+                invitation = invitations.get(role)
+                if invitation and invitation.status == 'ACCEPTED':
+                    raise serializers.ValidationError({
+                        'supervisor' if role == 'SUPERVISOR' else 'co_supervisor':
+                        'This reviewer has accepted the invitation and cannot be replaced.'
+                    })
+                if invitation and invitation.status == 'INVITED' and not no_reviewers_responded:
+                    raise serializers.ValidationError(
+                        'Only declined reviewer invitations can be changed after a reviewer has responded.'
+                    )
+                if not invitation and not no_reviewers_responded and invitations:
+                    raise serializers.ValidationError(
+                        'A reviewer can only be added before any invited reviewer responds.'
+                    )
+        else:
+            supervisor, co_supervisor = self._mapped_reviewers(subject_area, request)
+            attrs['supervisor'] = supervisor
+            attrs['co_supervisor'] = co_supervisor
+
         if co_supervisor and supervisor and co_supervisor.pk == supervisor.pk:
             raise serializers.ValidationError({'co_supervisor': 'The supervisor and co-supervisor must be different lecturers.'})
         if request and request.user.is_authenticated and (
@@ -147,6 +180,28 @@ class PublicationSerializer(serializers.ModelSerializer):
         if co_supervisor is not None or 'co_supervisor' in attrs:
             attrs['co_supervisor'] = co_supervisor
         return attrs
+
+    def _mapped_reviewers(self, subject_area, request):
+        mappings = ReviewerSubjectArea.objects.filter(
+            subject_area__iexact=subject_area.strip(),
+            reviewer__profile__role='LECTURER',
+            reviewer__is_active=True,
+        ).exclude(
+            reviewer=request.user,
+        ).select_related('reviewer').order_by('pk')
+        reviewers = []
+        seen_ids = set()
+        for mapping in mappings:
+            if mapping.reviewer_id not in seen_ids:
+                reviewers.append(mapping.reviewer)
+                seen_ids.add(mapping.reviewer_id)
+            if len(reviewers) == 2:
+                break
+        if not reviewers:
+            raise serializers.ValidationError({
+                'subject_area': 'No lecturer is mapped to this subject area. Contact an administrator to configure supervisor mappings.'
+            })
+        return reviewers[0], reviewers[1] if len(reviewers) > 1 else None
 
     def get_is_owner(self, obj):
         request = self.context.get('request')
