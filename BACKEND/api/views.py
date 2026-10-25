@@ -10,7 +10,7 @@ from rest_framework.decorators import action
 from rest_framework.views import APIView
 from rest_framework.exceptions import NotFound, PermissionDenied
 from rest_framework.response import Response
-from .models import Publication, AuthorProfile, PublicationDeletionRequest, UserProfile, ReviewerApplication, BroadcastMessage, UniversityDirectoryEntry
+from .models import Publication, AuthorProfile, PublicationDeletionRequest, UserProfile, ReviewerApplication, ReviewerSubjectArea, BroadcastMessage, UniversityDirectoryEntry
 from .serializers import PublicationSerializer, AuthorProfileSerializer, UserRegistrationSerializer, PublicationDeletionRequestSerializer, UserProfileSerializer, ReviewerApplicationSerializer, BroadcastMessageSerializer, AdminUserSerializer, AdminUserCreateSerializer, UniversityDirectoryEntrySerializer
 import random
 from django.contrib.auth.models import User
@@ -60,9 +60,17 @@ class PublicationViewSet(viewsets.ModelViewSet):
         is_reviewer = user.is_authenticated and (
             user.is_staff or getattr(getattr(user, 'profile', None), 'role', None) == 'REVIEWER'
         )
-        if user.is_authenticated and not is_reviewer:
-            queryset = queryset.filter(Q(is_approved=True) | Q(owner=user))
-        elif not is_reviewer:
+        if user.is_staff:
+            pass
+        elif user.is_authenticated and getattr(getattr(user, 'profile', None), 'role', None) == 'REVIEWER':
+            queryset = queryset.filter(
+                Q(is_approved=True) | Q(assigned_reviewer=user)
+            )
+        elif user.is_authenticated:
+            queryset = queryset.filter(
+                Q(is_approved=True) | Q(owner=user)
+            )
+        else:
             queryset = queryset.filter(is_approved=True)
 
         search_query = self.request.query_params.get('search', None)
@@ -78,17 +86,51 @@ class PublicationViewSet(viewsets.ModelViewSet):
 
     def perform_update(self, serializer):
         publication = self.get_object()
+
         if publication.owner_id != self.request.user.id:
             raise PermissionDenied('Only the publication owner may edit this record.')
+
         if publication.is_approved or publication.review_status == 'APPROVED':
             raise PermissionDenied('Approved publications cannot be edited.')
-        serializer.save(is_approved=False, review_status='PENDING', rejection_reason='')
+
+        original_subject_area = publication.subject_area
+
+        publication = serializer.save(
+            is_approved=False,
+            review_status='PENDING',
+            rejection_reason=''
+        )
+
+        if publication.subject_area != original_subject_area:
+            reviewer_mapping = ReviewerSubjectArea.objects.filter(
+                subject_area__iexact=publication.subject_area,
+                reviewer__profile__role='REVIEWER'
+            ).exclude(
+                reviewer=publication.owner
+            ).order_by('id').first()
+
+            publication.assigned_reviewer = (
+                reviewer_mapping.reviewer if reviewer_mapping else None
+            )
+            publication.save(update_fields=['assigned_reviewer'])
 
     def perform_create(self, serializer):
         profile = getattr(self.request.user, 'profile', None)
         if profile and profile.role == 'REVIEWER':
             raise PermissionDenied('Reviewers cannot create publications.')
-        serializer.save(owner=self.request.user)
+
+        publication = serializer.save(owner=self.request.user)
+
+        reviewer_mapping = ReviewerSubjectArea.objects.filter(
+            subject_area__iexact=publication.subject_area,
+            reviewer__profile__role='REVIEWER'
+        ).exclude(
+            reviewer=publication.owner
+        ).order_by('id').first()
+
+        if reviewer_mapping:
+            publication.assigned_reviewer = reviewer_mapping.reviewer
+            publication.save(update_fields=['assigned_reviewer'])
 
     def destroy(self, request, *args, **kwargs):
         return Response(
@@ -124,6 +166,8 @@ class PublicationViewSet(viewsets.ModelViewSet):
             raise PermissionDenied('Only a reviewer may approve publications.')
         if publication.owner_id == request.user.id:
             raise PermissionDenied('Reviewers cannot approve their own publications.')
+        if not request.user.is_staff and publication.assigned_reviewer_id != request.user.id:
+            raise PermissionDenied('This publication is not assigned to you.')
         if publication.review_status != 'PENDING':
             return Response({'detail': 'Only pending publications can be approved.'}, status=status.HTTP_409_CONFLICT)
         publication.is_approved = True
@@ -140,6 +184,8 @@ class PublicationViewSet(viewsets.ModelViewSet):
             raise PermissionDenied('Only a reviewer may reject publications.')
         if publication.owner_id == request.user.id:
             raise PermissionDenied('Reviewers cannot reject their own publications.')
+        if not request.user.is_staff and publication.assigned_reviewer_id != request.user.id:
+            raise PermissionDenied('This publication is not assigned to you.')
         if publication.review_status != 'PENDING':
             return Response({'detail': 'Only pending publications can be rejected.'}, status=status.HTTP_409_CONFLICT)
         reason = request.data.get('reason', '')
@@ -309,6 +355,10 @@ class AdminReviewerApplicationDetailView(APIView):
             profile, _ = UserProfile.objects.get_or_create(user=application.user, defaults={'department': ''})
             profile.role = 'REVIEWER'
             profile.save(update_fields=['role'])
+            ReviewerSubjectArea.objects.get_or_create(
+                reviewer=application.user,
+                subject_area=application.expertise.strip()
+            )
         return Response(ReviewerApplicationSerializer(application).data)
 
 
