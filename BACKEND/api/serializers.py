@@ -189,19 +189,14 @@ class PublicationSerializer(serializers.ModelSerializer):
         ).exclude(
             reviewer=request.user,
         ).select_related('reviewer').order_by('pk')
-        reviewers = []
-        seen_ids = set()
-        for mapping in mappings:
-            if mapping.reviewer_id not in seen_ids:
-                reviewers.append(mapping.reviewer)
-                seen_ids.add(mapping.reviewer_id)
-            if len(reviewers) == 2:
-                break
-        if not reviewers:
+        reviewer = mappings.first()
+
+        if not reviewer:
             raise serializers.ValidationError({
-                'subject_area': 'No lecturer is mapped to this subject area. Contact an administrator to configure supervisor mappings.'
+                'subject_area': 'No lecturer is mapped to this subject area. Contact an administrator to configure reviewer mappings.'
             })
-        return reviewers[0], reviewers[1] if len(reviewers) > 1 else None
+
+        return reviewer.reviewer, None
 
     def get_is_owner(self, obj):
         request = self.context.get('request')

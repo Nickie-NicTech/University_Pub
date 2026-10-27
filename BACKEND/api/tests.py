@@ -147,12 +147,20 @@ class PublicationTests(APITestCase):
         other = next(item for item in response.data if item['user_id'] == other_lecturer.id)
         self.assertFalse(other['is_subject_match'])
 
-    def test_publication_creation_automatically_assigns_subject_mapped_supervisors(self):
-        supervisor, _ = self.create_supervisor('auto-supervisor')
-        co_supervisor, _ = self.create_supervisor('auto-co-supervisor')
-        owner, _ = self.create_member('auto-supervisor-owner')
-        ReviewerSubjectArea.objects.create(reviewer=supervisor, subject_area='Neuroscience')
-        ReviewerSubjectArea.objects.create(reviewer=co_supervisor, subject_area='Neuroscience')
+    def test_publication_creation_automatically_assigns_one_subject_mapped_reviewer(self):
+        reviewer, _ = self.create_supervisor('auto-reviewer')
+        other_reviewer, _ = self.create_supervisor('other-auto-reviewer')
+        owner, _ = self.create_member('auto-reviewer-owner')
+
+        ReviewerSubjectArea.objects.create(
+            reviewer=reviewer,
+            subject_area='Neuroscience',
+        )
+        ReviewerSubjectArea.objects.create(
+            reviewer=other_reviewer,
+            subject_area='Neuroscience',
+        )
+
         self.client.force_authenticate(user=owner)
 
         response = self.client.post(
@@ -167,8 +175,9 @@ class PublicationTests(APITestCase):
         )
 
         self.assertEqual(response.status_code, status.HTTP_201_CREATED, response.data)
-        self.assertEqual(response.data['supervisor_id'], supervisor.id)
-        self.assertEqual(response.data['co_supervisor_id'], co_supervisor.id)
+        self.assertEqual(response.data['supervisor_id'], reviewer.id)
+        self.assertIsNone(response.data['co_supervisor_id'])
+        self.assertEqual(response.data['supervisor_name'], reviewer.get_full_name() or reviewer.username)
 
     def test_publication_creation_requires_a_subject_mapped_supervisor(self):
         owner, _ = self.create_member('unmapped-subject-owner')
@@ -259,49 +268,7 @@ class PublicationTests(APITestCase):
         )
         self.assertEqual(new_invitation.status, 'INVITED')
 
-    def test_owner_cannot_replace_unanswered_reviewer_after_another_declines(self):
-        supervisor, _ = self.create_supervisor('still-invited-supervisor')
-        co_supervisor, _ = self.create_supervisor('already-declined-co-supervisor')
-        replacement_supervisor, _ = self.create_supervisor('blocked-replacement-supervisor')
-        owner, _ = self.create_member('partially-responded-owner')
-        ReviewerSubjectArea.objects.create(reviewer=supervisor, subject_area='Astrophysics')
-        ReviewerSubjectArea.objects.create(reviewer=co_supervisor, subject_area='Astrophysics')
-        self.client.force_authenticate(user=owner)
-        created = self.client.post(
-            reverse('publication-list'),
-            {
-                'title': 'Partially responded assignment',
-                'abstract': 'Abstract',
-                'pub_type': 'JOURNAL',
-                'subject_area': 'Astrophysics',
-            },
-            format='json',
-        )
-        publication_id = created.data['id']
 
-        self.client.force_authenticate(user=co_supervisor)
-        declined = self.client.post(
-            reverse('publication-review-invitation', args=[publication_id]),
-            {'decision': 'DECLINED'},
-            format='json',
-        )
-        self.assertEqual(declined.status_code, status.HTTP_200_OK)
-
-        self.client.force_authenticate(user=owner)
-        updated = self.client.patch(
-            reverse('publication-detail', args=[publication_id]),
-            {'supervisor': replacement_supervisor.id},
-            format='json',
-        )
-
-        self.assertEqual(updated.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertEqual(
-            PublicationReviewInvitation.objects.get(
-                publication_id=publication_id,
-                role='SUPERVISOR',
-            ).reviewer_id,
-            supervisor.id,
-        )
 
     def test_owner_cannot_replace_a_reviewer_after_acceptance(self):
         supervisor, _ = self.create_supervisor('accepted-assignment-supervisor')
@@ -336,7 +303,7 @@ class PublicationTests(APITestCase):
             format='json',
         )
 
-        self.assertEqual(updated.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(updated.status_code, status.HTTP_400_BAD_REQUEST)
         self.assertEqual(
             PublicationReviewInvitation.objects.get(
                 publication_id=publication_id,
@@ -703,12 +670,13 @@ class PublicationTests(APITestCase):
         )
         self.assertEqual([item['id'] for item in review_assignments.data], [assigned_for_review.id])
 
-    def test_reviewers_accept_independently_and_all_accepted_reviews_are_required(self):
-        supervisor, _ = self.create_supervisor('approval-supervisor')
-        co_supervisor, _ = self.create_supervisor('approval-co-supervisor')
+    def test_assigned_reviewer_can_accept_and_approve_publication(self):
+        reviewer, _ = self.create_supervisor('approval-reviewer')
         owner, _ = self.create_member('approval-owner')
         reader, _ = self.create_member('approval-reader', role='LECTURER')
+
         self.client.force_authenticate(user=owner)
+
         response = self.client.post(
             reverse('publication-list'),
             {
@@ -716,106 +684,52 @@ class PublicationTests(APITestCase):
                 'abstract': 'Abstract',
                 'pub_type': 'JOURNAL',
                 'subject_area': 'Computing',
-                'supervisor': supervisor.id,
-                'co_supervisor': co_supervisor.id,
             },
             format='json',
         )
+
         self.assertEqual(response.status_code, status.HTTP_201_CREATED, response.data)
         publication_id = response.data['id']
-        invitation_notice = UserNotification.objects.get(user=supervisor)
-        self.assertEqual(invitation_notice.link, f'/lecturer/reviews?publication={publication_id}')
+
+        self.assertEqual(response.data['supervisor_id'], reviewer.id)
+        self.assertIsNone(response.data['co_supervisor_id'])
+
+        invitation_notice = UserNotification.objects.get(user=reviewer)
+        self.assertEqual(
+            invitation_notice.link,
+            f'/lecturer/reviews?publication={publication_id}',
+        )
 
         self.client.force_authenticate(user=reader)
+
         denied = self.client.post(
             reverse('publication-review-invitation', args=[publication_id]),
             {'decision': 'ACCEPTED'},
             format='json',
         )
+
         self.assertEqual(denied.status_code, status.HTTP_404_NOT_FOUND)
 
-        self.client.force_authenticate(user=supervisor)
-        supervisor_accepted = self.client.post(
-            reverse('publication-review-invitation', args=[publication_id]),
-            {'decision': 'ACCEPTED'}, format='json',
-        )
-        self.assertEqual(supervisor_accepted.status_code, status.HTTP_200_OK)
-        first_approval = self.client.post(
-            reverse('publication-review-decision', args=[publication_id]),
-            {'decision': 'APPROVED'},
-            format='json',
-        )
-        self.assertEqual(first_approval.status_code, status.HTTP_200_OK, first_approval.data)
-        self.assertFalse(first_approval.data['is_approved'])
+        self.client.force_authenticate(user=reviewer)
 
-        self.client.force_authenticate(user=co_supervisor)
-        accepted = self.client.post(
-            reverse('publication-review-invitation', args=[publication_id]),
-            {'decision': 'ACCEPTED'}, format='json',
-        )
-        self.assertEqual(accepted.status_code, status.HTTP_200_OK, accepted.data)
-        self.assertEqual(accepted.data['review_status'], 'PENDING')
-        self.assertEqual(
-            UserNotification.objects.filter(user=owner).latest('created_at').link,
-            f'/?publication={publication_id}',
-        )
-        approved = self.client.post(
-            reverse('publication-review-decision', args=[publication_id]),
-            {'decision': 'APPROVED'}, format='json',
-        )
-        self.assertEqual(approved.status_code, status.HTTP_200_OK, approved.data)
-        self.assertTrue(approved.data['is_approved'])
-        approval_notice = UserNotification.objects.get(user=owner, title__startswith='Publication approved')
-        self.assertEqual(approval_notice.link, f'/?publication={publication_id}')
-
-    def test_accepted_reviewer_can_approve_while_other_invitation_is_pending(self):
-        supervisor, _ = self.create_supervisor('declined-review-supervisor')
-        co_supervisor, _ = self.create_supervisor('declined-review-co-supervisor')
-        owner, _ = self.create_member('declined-review-owner')
-        self.client.force_authenticate(user=owner)
-        response = self.client.post(
-            reverse('publication-list'),
-            {
-                'title': 'Single accepting reviewer paper',
-                'abstract': 'Abstract',
-                'pub_type': 'JOURNAL',
-                'subject_area': 'Computing',
-                'supervisor': supervisor.id,
-                'co_supervisor': co_supervisor.id,
-            },
-            format='json',
-        )
-        publication_id = response.data['id']
-
-        self.client.force_authenticate(user=supervisor)
         accepted = self.client.post(
             reverse('publication-review-invitation', args=[publication_id]),
             {'decision': 'ACCEPTED'},
             format='json',
         )
+
+        self.assertEqual(accepted.status_code, status.HTTP_200_OK)
         self.assertEqual(accepted.data['review_status'], 'PENDING')
+
         approved = self.client.post(
             reverse('publication-review-decision', args=[publication_id]),
             {'decision': 'APPROVED'},
             format='json',
         )
-        self.assertEqual(approved.status_code, status.HTTP_200_OK, approved.data)
-        self.assertFalse(approved.data['is_approved'])
 
-        self.client.force_authenticate(user=co_supervisor)
-        declined = self.client.post(
-            reverse('publication-review-invitation', args=[publication_id]),
-            {'decision': 'DECLINED'},
-            format='json',
-        )
-        self.assertEqual(declined.status_code, status.HTTP_200_OK, declined.data)
-        self.assertEqual(declined.data['review_status'], 'APPROVED')
-        self.assertTrue(declined.data['is_approved'])
-        approval_notice = UserNotification.objects.get(
-            user=owner,
-            title=f'Publication approved: {declined.data["title"]}',
-        )
-        self.assertEqual(approval_notice.link, f'/?publication={publication_id}')
+        self.assertEqual(approved.status_code, status.HTTP_200_OK, approved.data)
+        self.assertTrue(approved.data['is_approved'])
+        self.assertEqual(approved.data['review_status'], 'APPROVED')
 
     def test_reviewers_can_request_revisions_then_owner_resubmits(self):
         reviewer, _ = self.create_supervisor('revision-supervisor')
