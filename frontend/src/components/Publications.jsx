@@ -360,9 +360,13 @@ export default function Publications({ user }) {
             } else {
                 response = await API.post('publications/', formData);
             }
+           const reviewerAssignment = response.data.supervisor_name
+                ? ` Assigned to: ${response.data.supervisor_name}.`
+                : '';
+
             setActionFeedback({
                 type: 'success',
-                message: `${editingId ? 'Publication changes saved successfully and resubmitted for review.' : 'Publication submitted successfully and is pending review.'}${response.data.notification_warning ? ` ${response.data.notification_warning}` : ''}`,
+                message: `${editingId ? 'Publication changes saved successfully and resubmitted for review.' : 'Publication submitted successfully and is pending review.'}${reviewerAssignment}${response.data.notification_warning ? ` ${response.data.notification_warning}` : ''}`,
             });
             clearForm();
             setShowSubmissionForm(false);
@@ -767,9 +771,10 @@ export default function Publications({ user }) {
                                 <p role="alert" style={{ color: '#b91c1c', fontSize: '0.85rem' }}>{supervisorError}</p>
                             ) : mappedSupervisors.length > 0 ? (
                                 <div role="status" style={{ padding: '10px 12px', border: '1px solid #bae6fd', borderRadius: 6, background: '#f0f9ff', color: '#075985', fontSize: '.85rem' }}>
-                                    <strong>Supervisors assigned automatically from this subject area</strong>
-                                    <div style={{ marginTop: 5 }}>Supervisor: {mappedSupervisors[0].name} — {mappedSupervisors[0].department}</div>
-                                    {mappedSupervisors[1] && <div style={{ marginTop: 3 }}>Co-supervisor: {mappedSupervisors[1].name} — {mappedSupervisors[1].department}</div>}
+                                    <strong>Reviewer assigned automatically from this subject area</strong>
+                                    <div style={{ marginTop: 5 }}>
+                                        Assigned to: {mappedSupervisors[0].name} — {mappedSupervisors[0].department}
+                                    </div>
                                 </div>
                             ) : (
                                 <p role="alert" style={{ margin: 0, color: '#b91c1c', fontSize: '0.85rem' }}>
