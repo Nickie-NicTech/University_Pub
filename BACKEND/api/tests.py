@@ -62,11 +62,158 @@ class JwtLifetimeTests(APITestCase):
         AccessToken(refreshed.data['access'])
 
 
+class SubjectMappingManagementTests(APITestCase):
+    def test_lecturer_can_save_skills_on_their_profile(self):
+        lecturer = User.objects.create_user(username='skillset-lecturer', password='test-password')
+        UserProfile.objects.create(user=lecturer, role='LECTURER', department='Computing')
+        self.client.force_authenticate(user=lecturer)
+
+        updated = self.client.patch(
+            reverse('current_user_profile'),
+            {'skillset': 'Software engineering, distributed systems'},
+            format='json',
+        )
+
+        self.assertEqual(updated.status_code, status.HTTP_200_OK, updated.data)
+        self.assertEqual(updated.data['skillset'], 'Software engineering, distributed systems')
+
+    def test_admin_can_create_list_and_remove_lecturer_subject_mappings(self):
+        admin = User.objects.create_superuser(username='mapping-admin', password='test-password')
+        lecturer = User.objects.create_user(
+            username='mapping-lecturer',
+            password='test-password',
+            first_name='Ada',
+            last_name='Lovelace',
+        )
+        UserProfile.objects.create(
+            user=lecturer,
+            role='LECTURER',
+            department='Computer Science',
+            skillset='Software engineering, databases',
+        )
+        self.client.force_authenticate(user=admin)
+        admin_users = self.client.get(reverse('admin_user_list'))
+        lecturer_record = next(item for item in admin_users.data if item['username'] == lecturer.username)
+        self.assertEqual(lecturer_record['user_id'], lecturer.id)
+
+        created = self.client.post(
+            reverse('admin_subject_mapping_list'),
+            {'subject_area': '  Software Engineering  ', 'reviewer': lecturer.id},
+            format='json',
+        )
+
+        self.assertEqual(created.status_code, status.HTTP_201_CREATED, created.data)
+        self.assertEqual(created.data['subject_area'], 'Software Engineering')
+        self.assertEqual(created.data['reviewer_name'], 'Ada Lovelace')
+        self.assertEqual(created.data['skillset'], 'Software engineering, databases')
+
+        duplicate = self.client.post(
+            reverse('admin_subject_mapping_list'),
+            {'subject_area': 'software engineering', 'reviewer': lecturer.id},
+            format='json',
+        )
+        self.assertEqual(duplicate.status_code, status.HTTP_400_BAD_REQUEST)
+
+        listed = self.client.get(reverse('admin_subject_mapping_list'))
+        self.assertEqual(listed.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(listed.data), 1)
+
+        deleted = self.client.delete(
+            reverse('admin_subject_mapping_detail', args=[created.data['id']]),
+        )
+        self.assertEqual(deleted.status_code, status.HTTP_204_NO_CONTENT)
+        self.assertFalse(ReviewerSubjectArea.objects.exists())
+
+    def test_mapping_normalizes_common_engineering_misspellings(self):
+        admin = User.objects.create_superuser(username='mapping-spelling-admin', password='test-password')
+        lecturer = User.objects.create_user(username='mapping-spelling-lecturer', password='test-password')
+        UserProfile.objects.create(user=lecturer, role='LECTURER', department='Computing')
+        self.client.force_authenticate(user=admin)
+
+        created = self.client.post(
+            reverse('admin_subject_mapping_list'),
+            {'subject_area': 'Software engeneering', 'reviewer': lecturer.id},
+            format='json',
+        )
+
+        self.assertEqual(created.status_code, status.HTTP_201_CREATED, created.data)
+        self.assertEqual(created.data['subject_area'], 'Software Engineering')
+        self.assertEqual(
+            ReviewerSubjectArea.objects.get(reviewer=lecturer).subject_area,
+            'Software Engineering',
+        )
+
+    def test_removed_mapping_excludes_lecturer_from_automatic_matching_until_admin_remaps(self):
+        admin = User.objects.create_superuser(username='mapping-exclusion-admin', password='test-password')
+        lecturer = User.objects.create_user(username='excluded-mapping-lecturer', password='test-password')
+        UserProfile.objects.create(
+            user=lecturer,
+            role='LECTURER',
+            department='Computing',
+            skillset='Software engineering',
+        )
+        fallback = User.objects.create_user(username='fallback-mapping-lecturer', password='test-password')
+        UserProfile.objects.create(user=fallback, role='LECTURER', department='Other')
+        self.client.force_authenticate(user=admin)
+
+        created = self.client.post(
+            reverse('admin_subject_mapping_list'),
+            {'subject_area': 'Software Engineering', 'reviewer': lecturer.id},
+            format='json',
+        )
+        self.assertEqual(created.status_code, status.HTTP_201_CREATED, created.data)
+
+        deleted = self.client.delete(
+            reverse('admin_subject_mapping_detail', args=[created.data['id']]),
+        )
+        self.assertEqual(deleted.status_code, status.HTTP_204_NO_CONTENT)
+
+        ranked = self.client.get(
+            reverse('supervisor_list'),
+            {'subject_area': 'Software Engineering'},
+        )
+        self.assertEqual(ranked.status_code, status.HTTP_200_OK)
+        self.assertNotIn(lecturer.id, [item['user_id'] for item in ranked.data])
+        self.assertEqual(ranked.data[0]['user_id'], fallback.id)
+
+        restored = self.client.post(
+            reverse('admin_subject_mapping_list'),
+            {'subject_area': 'Software Engineering', 'reviewer': lecturer.id},
+            format='json',
+        )
+        self.assertEqual(restored.status_code, status.HTTP_201_CREATED, restored.data)
+        ranked_again = self.client.get(
+            reverse('supervisor_list'),
+            {'subject_area': 'Software Engineering'},
+        )
+        self.assertEqual(ranked_again.data[0]['user_id'], lecturer.id)
+
+    def test_subject_mapping_management_requires_admin_and_lecturer(self):
+        user = User.objects.create_user(username='mapping-student', password='test-password')
+        UserProfile.objects.create(user=user, role='STUDENT', department='Computing')
+        self.client.force_authenticate(user=user)
+
+        forbidden = self.client.get(reverse('admin_subject_mapping_list'))
+        self.assertEqual(forbidden.status_code, status.HTTP_403_FORBIDDEN)
+
+        admin = User.objects.create_superuser(username='mapping-validation-admin', password='test-password')
+        self.client.force_authenticate(user=admin)
+        invalid_reviewer = self.client.post(
+            reverse('admin_subject_mapping_list'),
+            {'subject_area': 'Computing', 'reviewer': user.id},
+            format='json',
+        )
+        self.assertEqual(invalid_reviewer.status_code, status.HTTP_400_BAD_REQUEST)
+
+
 @override_settings(
     EMAIL_BACKEND='django.core.mail.backends.locmem.EmailBackend',
     DEFAULT_FROM_EMAIL='unipub@example.com',
 )
 class PublicationTests(APITestCase):
+    def manuscript_upload(self, filename='manuscript.pdf', content=b'%PDF-1.4 test'):
+        return SimpleUploadedFile(filename, content, content_type='application/pdf')
+
     def create_supervisor(self, username='supervisor'):
         user = User.objects.create_user(
             username=username,
@@ -170,8 +317,9 @@ class PublicationTests(APITestCase):
                 'abstract': 'Abstract',
                 'pub_type': 'JOURNAL',
                 'subject_area': 'neuroscience',
+                'file_attachment': self.manuscript_upload(),
             },
-            format='json',
+            format='multipart',
         )
 
         self.assertEqual(response.status_code, status.HTTP_201_CREATED, response.data)
@@ -179,23 +327,71 @@ class PublicationTests(APITestCase):
         self.assertIsNone(response.data['co_supervisor_id'])
         self.assertEqual(response.data['supervisor_name'], reviewer.get_full_name() or reviewer.username)
 
-    def test_publication_creation_requires_a_subject_mapped_supervisor(self):
+    def test_publication_creation_automatically_matches_lecturer_expertise(self):
+        matching, matching_profile = self.create_supervisor('expertise-matched-lecturer')
+        other, _ = self.create_supervisor('expertise-unmatched-lecturer')
+        matching_profile.skillset = 'Software engeneering and databases'
+        matching_profile.save(update_fields=['skillset'])
+        other.profile.skillset = 'Education and curriculum design'
+        other.profile.save(update_fields=['skillset'])
         owner, _ = self.create_member('unmapped-subject-owner')
         self.client.force_authenticate(user=owner)
 
         response = self.client.post(
             reverse('publication-list'),
             {
-                'title': 'Unmapped paper',
+                'title': 'Automatically matched paper',
                 'abstract': 'Abstract',
                 'pub_type': 'JOURNAL',
-                'subject_area': 'Unmapped subject',
+                'subject_area': 'Software Engineering',
+                'file_attachment': self.manuscript_upload(),
             },
-            format='json',
+            format='multipart',
         )
 
-        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-        self.assertIn('subject_area', response.data)
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED, response.data)
+        self.assertEqual(response.data['supervisor_id'], matching.id)
+        self.assertTrue(ReviewerSubjectArea.objects.filter(
+            reviewer=matching,
+            subject_area='Software Engineering',
+        ).exists())
+        typo_match = self.client.get(
+            reverse('supervisor_list'),
+            {'subject_area': 'Software engeneering'},
+        )
+        self.assertEqual(typo_match.status_code, status.HTTP_200_OK)
+        self.assertEqual(typo_match.data[0]['user_id'], matching.id)
+
+    def test_publication_creation_requires_a_valid_pdf_manuscript(self):
+        supervisor, _ = self.create_supervisor('required-file-supervisor')
+        owner, _ = self.create_member('required-file-owner')
+        self.client.force_authenticate(user=owner)
+        payload = {
+            'title': 'Manuscript required',
+            'abstract': 'Abstract',
+            'pub_type': 'JOURNAL',
+            'subject_area': 'Computing',
+        }
+
+        missing = self.client.post(reverse('publication-list'), payload, format='json')
+        self.assertEqual(missing.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('file_attachment', missing.data)
+
+        invalid = self.client.post(
+            reverse('publication-list'),
+            {**payload, 'file_attachment': self.manuscript_upload('paper.txt', b'not a PDF')},
+            format='multipart',
+        )
+        self.assertEqual(invalid.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('file_attachment', invalid.data)
+
+        valid = self.client.post(
+            reverse('publication-list'),
+            {**payload, 'file_attachment': self.manuscript_upload()},
+            format='multipart',
+        )
+        self.assertEqual(valid.status_code, status.HTTP_201_CREATED, valid.data)
+        self.assertEqual(valid.data['supervisor_id'], supervisor.id)
 
     def test_owner_can_reassign_unanswered_mapped_supervisor_while_editing(self):
         mapped_supervisor, _ = self.create_supervisor('unanswered-mapped-supervisor')
@@ -210,8 +406,9 @@ class PublicationTests(APITestCase):
                 'abstract': 'Abstract',
                 'pub_type': 'JOURNAL',
                 'subject_area': 'Astrophysics',
+                'file_attachment': self.manuscript_upload(),
             },
-            format='json',
+            format='multipart',
         )
         self.assertEqual(created.status_code, status.HTTP_201_CREATED, created.data)
 
@@ -241,8 +438,9 @@ class PublicationTests(APITestCase):
                 'abstract': 'Abstract',
                 'pub_type': 'JOURNAL',
                 'subject_area': 'Astrophysics',
+                'file_attachment': self.manuscript_upload(),
             },
-            format='json',
+            format='multipart',
         )
         publication_id = created.data['id']
         self.client.force_authenticate(user=declined_supervisor)
@@ -283,8 +481,9 @@ class PublicationTests(APITestCase):
                 'abstract': 'Abstract',
                 'pub_type': 'JOURNAL',
                 'subject_area': 'Astrophysics',
+                'file_attachment': self.manuscript_upload(),
             },
-            format='json',
+            format='multipart',
         )
         publication_id = created.data['id']
 
@@ -481,8 +680,8 @@ class PublicationTests(APITestCase):
         self.client.force_authenticate(user=owner)
         create_response = self.client.post(
             reverse('publication-list'),
-            {'title': 'Owned paper', 'abstract': 'Abstract', 'pub_type': 'JOURNAL', 'subject_area': 'Computing', 'supervisor': supervisor.user_id},
-            format='json',
+            {'title': 'Owned paper', 'abstract': 'Abstract', 'pub_type': 'JOURNAL', 'subject_area': 'Computing', 'supervisor': supervisor.user_id, 'file_attachment': self.manuscript_upload()},
+            format='multipart',
         )
         publication_id = create_response.data['id']
 
@@ -684,8 +883,9 @@ class PublicationTests(APITestCase):
                 'abstract': 'Abstract',
                 'pub_type': 'JOURNAL',
                 'subject_area': 'Computing',
+                'file_attachment': self.manuscript_upload(),
             },
-            format='json',
+            format='multipart',
         )
 
         self.assertEqual(response.status_code, status.HTTP_201_CREATED, response.data)
@@ -743,8 +943,9 @@ class PublicationTests(APITestCase):
                 'pub_type': 'JOURNAL',
                 'subject_area': 'Computing',
                 'supervisor': reviewer.id,
+                'file_attachment': self.manuscript_upload(),
             },
-            format='json',
+            format='multipart',
         )
         publication_id = response.data['id']
         self.client.force_authenticate(user=reviewer)
@@ -791,8 +992,9 @@ class PublicationTests(APITestCase):
                 'subject_area': 'Computing',
                 'supervisor': supervisor.id,
                 'co_supervisor': co_supervisor.id,
+                'file_attachment': self.manuscript_upload(),
             },
-            format='json',
+            format='multipart',
         )
         self.assertEqual(created.status_code, status.HTTP_201_CREATED, created.data)
 
@@ -840,8 +1042,8 @@ class PublicationTests(APITestCase):
         self.client.force_authenticate(user=owner)
         create_response = self.client.post(
             reverse('publication-list'),
-            {'title': 'Delete request paper', 'abstract': 'Abstract', 'pub_type': 'JOURNAL', 'subject_area': 'Computing', 'supervisor': supervisor.user_id},
-            format='json',
+            {'title': 'Delete request paper', 'abstract': 'Abstract', 'pub_type': 'JOURNAL', 'subject_area': 'Computing', 'supervisor': supervisor.user_id, 'file_attachment': self.manuscript_upload()},
+            format='multipart',
         )
         publication_id = create_response.data['id']
 
@@ -896,8 +1098,9 @@ class PublicationTests(APITestCase):
                 'subject_area': 'Computing',
                 'authors': [author.id],
                 'supervisor': supervisor.user_id,
+                'file_attachment': self.manuscript_upload(),
             },
-            format='json',
+            format='multipart',
         )
 
         self.assertEqual(response.status_code, status.HTTP_201_CREATED, response.data)
@@ -964,8 +1167,9 @@ class PublicationTests(APITestCase):
             'pub_type': 'JOURNAL',
             'subject_area': 'Computer Science',
             'supervisor': reviewer.id,
-            'authors': []
+            'authors': [],
+            'file_attachment': self.manuscript_upload(),
         }
-        response = self.client.post(url, data, format='json')
+        response = self.client.post(url, data, format='multipart')
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         self.assertEqual(Publication.objects.count(), 1)

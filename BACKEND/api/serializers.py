@@ -4,7 +4,8 @@ from django.contrib.auth.models import User
 from django.db import transaction
 import re
 from django.db.models import Sum
-from .models import Publication, PublicationReviewInvitation, ReviewerSubjectArea, AuthorProfile, UserProfile, PublicationDeletionRequest, UserNotification, BroadcastMessage, UniversityDirectoryEntry
+from .models import Publication, PublicationReviewInvitation, ReviewerSubjectArea, ReviewerSubjectAreaExclusion, AuthorProfile, UserProfile, PublicationDeletionRequest, UserNotification, BroadcastMessage, UniversityDirectoryEntry
+from .reviewer_matching import canonical_subject_area, rank_lecturers, subject_similarity
 
 class RepositoryTokenObtainPairSerializer(TokenObtainPairSerializer):
     @classmethod
@@ -32,7 +33,7 @@ class UserProfileSerializer(serializers.ModelSerializer):
     class Meta:
         model = UserProfile
         fields = [
-            'username', 'first_name', 'last_name', 'email', 'role', 'department',
+            'username', 'first_name', 'last_name', 'email', 'role', 'department', 'skillset',
             'profile_picture', 'uploaded_materials', 'approved_materials',
             'total_downloads', 'pending_deletion_requests',
         ]
@@ -79,6 +80,7 @@ class AuthorProfileSerializer(serializers.ModelSerializer):
         return obj.user.get_full_name() if obj.user else f"Author {obj.pk}"
 
 class PublicationSerializer(serializers.ModelSerializer):
+    file_attachment = serializers.FileField(required=False, allow_null=True)
     authors = serializers.PrimaryKeyRelatedField(
         many=True,
         queryset=AuthorProfile.objects.all(),
@@ -114,6 +116,22 @@ class PublicationSerializer(serializers.ModelSerializer):
         read_only_fields = ['supervisor_id', 'co_supervisor_id', 'download_count', 'is_approved', 'review_status', 'review_feedback', 'supervisor_name', 'co_supervisor_name', 'review_invitations', 'review_invitation_status', 'my_review_decision', 'owner_username', 'is_owner', 'is_reviewer', 'is_invited_reviewer', 'upload_date']
 
     def validate(self, attrs):
+        uploaded_file = attrs.get('file_attachment')
+        if not self.instance and not uploaded_file:
+            raise serializers.ValidationError({
+                'file_attachment': 'Upload the manuscript PDF before submitting this publication.'
+            })
+        if uploaded_file:
+            if not uploaded_file.name.lower().endswith('.pdf'):
+                raise serializers.ValidationError({
+                    'file_attachment': 'The manuscript must be a PDF file.'
+                })
+            if uploaded_file.read(5) != b'%PDF-':
+                raise serializers.ValidationError({
+                    'file_attachment': 'The uploaded file does not appear to be a valid PDF manuscript.'
+                })
+            uploaded_file.seek(0)
+
         if self.initial_data.get('co_supervisor') == '':
             attrs['co_supervisor'] = None
         request = self.context.get('request')
@@ -182,21 +200,16 @@ class PublicationSerializer(serializers.ModelSerializer):
         return attrs
 
     def _mapped_reviewers(self, subject_area, request):
-        mappings = ReviewerSubjectArea.objects.filter(
-            subject_area__iexact=subject_area.strip(),
-            reviewer__profile__role='LECTURER',
-            reviewer__is_active=True,
-        ).exclude(
-            reviewer=request.user,
-        ).select_related('reviewer').order_by('pk')
-        reviewer = mappings.first()
-
-        if not reviewer:
+        lecturers = UserProfile.objects.select_related('user').filter(
+            role='LECTURER',
+            user__is_active=True,
+        ).exclude(user=request.user)
+        ranked = rank_lecturers(subject_area, lecturers)
+        if not ranked:
             raise serializers.ValidationError({
-                'subject_area': 'No lecturer is mapped to this subject area. Contact an administrator to configure reviewer mappings.'
+                'subject_area': 'No eligible lecturer is available for this subject area. Ask an administrator to review lecturer profiles or mappings.'
             })
-
-        return reviewer.reviewer, None
+        return ranked[0].user, None
 
     def get_is_owner(self, obj):
         request = self.context.get('request')
@@ -274,6 +287,11 @@ class PublicationSerializer(serializers.ModelSerializer):
 
         publication = Publication.objects.create(owner=owner, **validated_data)
         publication.authors.set(authors)
+        mapping_subject_area = canonical_subject_area(publication.subject_area)
+        ReviewerSubjectArea.objects.get_or_create(
+            reviewer=supervisor,
+            subject_area=mapping_subject_area,
+        )
         PublicationReviewInvitation.objects.create(
             publication=publication,
             reviewer=supervisor,
@@ -424,6 +442,7 @@ class BroadcastMessageSerializer(serializers.ModelSerializer):
 
 
 class AdminUserSerializer(serializers.ModelSerializer):
+    user_id = serializers.IntegerField(read_only=True)
     username = serializers.CharField(source='user.username')
     first_name = serializers.CharField(source='user.first_name', required=False, allow_blank=True)
     last_name = serializers.CharField(source='user.last_name', required=False, allow_blank=True)
@@ -432,7 +451,7 @@ class AdminUserSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = UserProfile
-        fields = ['id', 'username', 'first_name', 'last_name', 'email', 'role', 'department', 'is_active']
+        fields = ['id', 'user_id', 'username', 'first_name', 'last_name', 'email', 'role', 'department', 'skillset', 'is_active']
 
     def validate_role(self, role):
         if role not in {'STUDENT', 'LECTURER'}:
@@ -456,6 +475,7 @@ class AdminUserCreateSerializer(serializers.Serializer):
     email = serializers.EmailField(required=False, allow_blank=True)
     role = serializers.ChoiceField(choices=['STUDENT', 'LECTURER'])
     department = serializers.CharField(required=False, allow_blank=True)
+    skillset = serializers.CharField(required=False, allow_blank=True, max_length=500)
 
     def validate_username(self, username):
         if User.objects.filter(username=username).exists():
@@ -466,11 +486,13 @@ class AdminUserCreateSerializer(serializers.Serializer):
         password = validated_data.pop('password')
         role = validated_data.pop('role')
         department = validated_data.pop('department', '')
+        skillset = validated_data.pop('skillset', '')
         user = User.objects.create_user(password=password, **validated_data)
         UserProfile.objects.create(
             user=user,
             role=role,
             department=department,
+            skillset=skillset,
         )
         return UserProfile.objects.select_related('user').get(user=user)
 
@@ -483,7 +505,7 @@ class SupervisorSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = UserProfile
-        fields = ['id', 'user_id', 'name', 'username', 'department', 'is_subject_match']
+        fields = ['id', 'user_id', 'name', 'username', 'department', 'skillset', 'is_subject_match']
 
     def get_name(self, profile):
         return profile.user.get_full_name() or profile.user.username
@@ -500,3 +522,56 @@ class UniversityDirectoryEntrySerializer(serializers.ModelSerializer):
 
     def get_full_name(self, entry):
         return f'{entry.first_name} {entry.last_name}'.strip()
+
+
+class AdminSubjectMappingSerializer(serializers.ModelSerializer):
+    reviewer = serializers.PrimaryKeyRelatedField(
+        queryset=User.objects.filter(
+            is_active=True,
+            profile__role='LECTURER',
+        ),
+    )
+    reviewer_name = serializers.SerializerMethodField()
+    reviewer_username = serializers.CharField(source='reviewer.username', read_only=True)
+    department = serializers.CharField(source='reviewer.profile.department', read_only=True)
+    skillset = serializers.CharField(source='reviewer.profile.skillset', read_only=True)
+
+    class Meta:
+        model = ReviewerSubjectArea
+        fields = [
+            'id', 'subject_area', 'reviewer', 'reviewer_name',
+            'reviewer_username', 'department', 'skillset',
+        ]
+
+    def validate_subject_area(self, subject_area):
+        subject_area = subject_area.strip()
+        if not subject_area:
+            raise serializers.ValidationError('Enter a subject area.')
+        return canonical_subject_area(subject_area)
+
+    def validate(self, attrs):
+        reviewer = attrs.get('reviewer')
+        subject_area = attrs.get('subject_area')
+        existing_mappings = ReviewerSubjectArea.objects.filter(reviewer=reviewer)
+        if self.instance:
+            existing_mappings = existing_mappings.exclude(pk=self.instance.pk)
+        if any(
+            subject_similarity(subject_area, mapping.subject_area) >= 0.78
+            for mapping in existing_mappings
+        ):
+            raise serializers.ValidationError({
+                'subject_area': 'This lecturer is already mapped to that subject area or a spelling variant.'
+            })
+        return attrs
+
+    def get_reviewer_name(self, mapping):
+        return mapping.reviewer.get_full_name() or mapping.reviewer.username
+
+    def create(self, validated_data):
+        reviewer = validated_data['reviewer']
+        subject_area = validated_data['subject_area']
+        exclusions = ReviewerSubjectAreaExclusion.objects.filter(reviewer=reviewer)
+        for exclusion in exclusions:
+            if subject_similarity(subject_area, exclusion.subject_area) >= 0.78:
+                exclusion.delete()
+        return super().create(validated_data)

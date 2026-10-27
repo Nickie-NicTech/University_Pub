@@ -1,7 +1,7 @@
 import secrets
 import logging
 from smtplib import SMTPException
-from django.db.models import Exists, OuterRef, Q, F, Sum, Subquery
+from django.db.models import Q, F, Sum
 from django.conf import settings
 from django.core.mail import send_mail
 from django.utils import timezone
@@ -12,8 +12,9 @@ from rest_framework.decorators import action
 from rest_framework.views import APIView
 from rest_framework.exceptions import NotFound, PermissionDenied
 from rest_framework.response import Response
-from .models import Publication, PublicationReviewInvitation, ReviewerSubjectArea, AuthorProfile, PublicationDeletionRequest, UserProfile, UserNotification, BroadcastMessage, UniversityDirectoryEntry
-from .serializers import PublicationSerializer, AuthorProfileSerializer, UserRegistrationSerializer, PublicationDeletionRequestSerializer, UserProfileSerializer, UserNotificationSerializer, BroadcastMessageSerializer, AdminUserSerializer, AdminUserCreateSerializer, UniversityDirectoryEntrySerializer, SupervisorSerializer
+from .models import Publication, PublicationReviewInvitation, ReviewerSubjectArea, ReviewerSubjectAreaExclusion, AuthorProfile, PublicationDeletionRequest, UserProfile, UserNotification, BroadcastMessage, UniversityDirectoryEntry
+from .serializers import PublicationSerializer, AuthorProfileSerializer, UserRegistrationSerializer, PublicationDeletionRequestSerializer, UserProfileSerializer, UserNotificationSerializer, BroadcastMessageSerializer, AdminUserSerializer, AdminUserCreateSerializer, UniversityDirectoryEntrySerializer, SupervisorSerializer, AdminSubjectMappingSerializer
+from .reviewer_matching import canonical_subject_area, rank_lecturers, subject_similarity
 import random
 from django.contrib.auth.models import User
 from rest_framework import generics, permissions
@@ -435,30 +436,13 @@ class SupervisorListView(generics.ListAPIView):
 
     def get_queryset(self):
         subject_area = self.request.query_params.get('subject_area', '').strip()
-        subject_matches = ReviewerSubjectArea.objects.filter(
-            reviewer_id=OuterRef('user_id'),
-            subject_area__iexact=subject_area,
-        )
-        subject_mapping_order = ReviewerSubjectArea.objects.filter(
-            reviewer_id=OuterRef('user_id'),
-            subject_area__iexact=subject_area,
-        ).order_by('pk').values('pk')[:1]
         queryset = UserProfile.objects.select_related('user').filter(
             role='LECTURER',
             user__is_active=True,
-        ).annotate(
-            is_subject_match=Exists(subject_matches),
-            subject_mapping_order=Subquery(subject_mapping_order),
-        ).order_by(
-            '-is_subject_match',
-            'subject_mapping_order',
-            'user__last_name',
-            'user__first_name',
-            'user__username',
         )
         if self.request.user.is_authenticated:
             queryset = queryset.exclude(user=self.request.user)
-        return queryset
+        return rank_lecturers(subject_area, queryset)
 
 
 class UserNotificationListView(generics.ListAPIView):
@@ -537,6 +521,30 @@ class AdminUserDetailView(generics.RetrieveUpdateDestroyAPIView):
         if instance.user_id == self.request.user.id:
             raise PermissionDenied('You cannot remove the active administrator account.')
         instance.user.delete()
+
+
+class AdminSubjectMappingListCreateView(generics.ListCreateAPIView):
+    permission_classes = [permissions.IsAdminUser]
+    serializer_class = AdminSubjectMappingSerializer
+    queryset = ReviewerSubjectArea.objects.select_related('reviewer', 'reviewer__profile').order_by(
+        'subject_area', 'reviewer__last_name', 'reviewer__first_name', 'reviewer__username'
+    )
+
+
+class AdminSubjectMappingDetailView(generics.DestroyAPIView):
+    permission_classes = [permissions.IsAdminUser]
+    serializer_class = AdminSubjectMappingSerializer
+    queryset = ReviewerSubjectArea.objects.select_related('reviewer')
+
+    def perform_destroy(self, instance):
+        ReviewerSubjectAreaExclusion.objects.get_or_create(
+            reviewer=instance.reviewer,
+            subject_area=canonical_subject_area(instance.subject_area),
+        )
+        for mapping in ReviewerSubjectArea.objects.filter(reviewer=instance.reviewer):
+            if subject_similarity(instance.subject_area, mapping.subject_area) >= 0.78:
+                mapping.delete()
+
 
 class AdminAnalyticsView(APIView):
     permission_classes = [permissions.IsAdminUser]

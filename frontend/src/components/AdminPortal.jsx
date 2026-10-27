@@ -7,6 +7,7 @@ import './AdminPortal.css';
 const sections = [
     { id: 'overview', label: 'Overview', icon: LayoutDashboard },
     { id: 'users', label: 'Users', icon: Users },
+    { id: 'subject-mappings', label: 'Subject mappings', icon: BookOpenCheck },
     { id: 'broadcasts', label: 'Broadcasts', icon: Bell },
     { id: 'directory', label: 'University directory', icon: Database },
 ];
@@ -15,6 +16,7 @@ export default function AdminPortal({ onLogout }) {
     const [section, setSection] = useState('overview');
     const [analytics, setAnalytics] = useState(null);
     const [users, setUsers] = useState([]);
+    const [mappings, setMappings] = useState([]);
     const [broadcasts, setBroadcasts] = useState([]);
     const [directory, setDirectory] = useState([]);
     const [error, setError] = useState('');
@@ -22,13 +24,15 @@ export default function AdminPortal({ onLogout }) {
 
     const refresh = async () => {
         try {
-            const [metrics, people, messages, directoryRecords] = await Promise.all([
+            const [metrics, people, subjectMappings, messages, directoryRecords] = await Promise.all([
                 API.get('admin/analytics/'), API.get('admin/users/'),
+                API.get('admin/subject-mappings/'),
                 API.get('admin/broadcasts/'), API.get('admin/university-directory/'),
             ]);
             setError('');
             setAnalytics(metrics.data);
             setUsers(people.data);
+            setMappings(subjectMappings.data);
             setBroadcasts(messages.data);
             setDirectory(directoryRecords.data);
         } catch (requestError) {
@@ -65,6 +69,7 @@ export default function AdminPortal({ onLogout }) {
                     {error && <div className="admin-alert" role="alert">{error}</div>}
                     {section === 'overview' && <Overview analytics={analytics} onManageUsers={() => setSection('users')} />}
                     {section === 'users' && <UserManagement users={users} onRefresh={refresh} />}
+                    {section === 'subject-mappings' && <SubjectMappings mappings={mappings} users={users} onRefresh={refresh} />}
                     {section === 'broadcasts' && <Broadcasts messages={broadcasts} onRefresh={refresh} />}
                     {section === 'directory' && <UniversityDirectory entries={directory} onRefresh={refresh} />}
                 </div>
@@ -91,7 +96,7 @@ function UserManagement({ users, onRefresh }) {
     const [query, setQuery] = useState('');
     const [showCreate, setShowCreate] = useState(false);
     const [error, setError] = useState('');
-    const filtered = users.filter((user) => `${user.username} ${user.email} ${user.department}`.toLowerCase().includes(query.toLowerCase()));
+    const filtered = users.filter((user) => `${user.username} ${user.email} ${user.department} ${user.skillset}`.toLowerCase().includes(query.toLowerCase()));
 
     const updateUser = async (id, changes) => {
         setError('');
@@ -109,25 +114,125 @@ function UserManagement({ users, onRefresh }) {
         {error && <div className="admin-alert" role="alert">{error}</div>}
         {showCreate && <CreateUser onCreated={async () => { setShowCreate(false); await onRefresh(); }} onError={setError} />}
         <div className="admin-table-tools"><span>{filtered.length} accounts</span><label className="admin-search"><Search size={16} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search accounts" /></label></div>
-        <div className="admin-table-wrap"><table className="admin-table"><thead><tr><th>Account</th><th>Department</th><th>Role</th><th>Access</th><th aria-label="Actions" /></tr></thead><tbody>{filtered.map((user) => <UserRow key={user.id} user={user} onSave={updateUser} onDelete={deleteUser} />)}{filtered.length === 0 && <tr><td colSpan="5" className="admin-empty">No matching accounts.</td></tr>}</tbody></table></div>
+        <div className="admin-table-wrap"><table className="admin-table"><thead><tr><th>Account</th><th>Department and expertise</th><th>Role</th><th>Access</th><th aria-label="Actions" /></tr></thead><tbody>{filtered.map((user) => <UserRow key={user.id} user={user} onSave={updateUser} onDelete={deleteUser} />)}{filtered.length === 0 && <tr><td colSpan="5" className="admin-empty">No matching accounts.</td></tr>}</tbody></table></div>
+    </>;
+}
+
+function SubjectMappings({ mappings, users, onRefresh }) {
+    const [subjectArea, setSubjectArea] = useState('');
+    const [reviewerId, setReviewerId] = useState('');
+    const [error, setError] = useState('');
+    const [busy, setBusy] = useState(false);
+    const [deletingId, setDeletingId] = useState(null);
+    const lecturers = users.filter((user) => user.role === 'LECTURER' && user.is_active);
+    const words = subjectArea.toLowerCase().match(/[a-z0-9]+/g) || [];
+    const candidates = [...lecturers].sort((first, second) => {
+        const score = (lecturer) => {
+            const skillset = (lecturer.skillset || '').toLowerCase();
+            const department = (lecturer.department || '').toLowerCase();
+            return words.reduce((total, word) => total + (skillset.includes(word) ? 3 : department.includes(word) ? 1 : 0), 0);
+        };
+        return score(second) - score(first)
+            || `${first.last_name} ${first.first_name} ${first.username}`.localeCompare(`${second.last_name} ${second.first_name} ${second.username}`);
+    });
+
+    const addMapping = async (event) => {
+        event.preventDefault();
+        setBusy(true);
+        setError('');
+        try {
+            await API.post('admin/subject-mappings/', {
+                subject_area: subjectArea.trim(),
+                reviewer: Number(reviewerId),
+            });
+            setSubjectArea('');
+            setReviewerId('');
+            await onRefresh();
+        } catch (requestError) {
+            const details = requestError.response?.data;
+            setError(details ? Object.values(details).flat().join(' ') : 'Unable to add subject mapping.');
+        } finally {
+            setBusy(false);
+        }
+    };
+
+    const removeMapping = async (mapping) => {
+        if (!window.confirm(`Remove ${mapping.reviewer_name} from ${mapping.subject_area}?`)) return;
+        setDeletingId(mapping.id);
+        setError('');
+        try {
+            await API.delete(`admin/subject-mappings/${mapping.id}/`);
+            await onRefresh();
+        } catch (requestError) {
+            const details = requestError.response?.data;
+            setError(details ? Object.values(details).flat().join(' ') : 'Unable to remove subject mapping.');
+        } finally {
+            setDeletingId(null);
+        }
+    };
+
+    const matchingMapping = mappings.some((mapping) =>
+        mapping.subject_area.toLowerCase() === subjectArea.trim().toLowerCase()
+        && String(mapping.reviewer) === reviewerId
+    );
+
+    return <>
+        <div className="admin-section-intro"><div><h2>Lecturer expertise</h2><p>Subject mappings are created from lecturer skills and departments when publications are submitted. Add explicit mappings here or remove a mapping to exclude that lecturer from automatic matching for the subject.</p></div></div>
+        {error && <div className="admin-alert" role="alert">{error}</div>}
+        <form className="admin-panel admin-create-form" onSubmit={addMapping}>
+            <div className="admin-panel-heading"><div><span className="admin-panel-kicker">REVIEWER ROUTING</span><h2>Add subject mapping</h2></div></div>
+            <p className="admin-mapping-note">Suggestions are ranked by department and skills. Review and select a lecturer; profiles never create mappings automatically.</p>
+            <div className="admin-form-grid admin-mapping-form">
+                <label>Publication subject area<input value={subjectArea} onChange={(event) => { setSubjectArea(event.target.value); setReviewerId(''); }} maxLength={100} placeholder="e.g. Software Engineering" required /></label>
+                <label>Lecturer
+                    <select value={reviewerId} onChange={(event) => setReviewerId(event.target.value)} required>
+                        <option value="">Select a lecturer</option>
+                        {candidates.map((lecturer) => {
+                            const alreadyMapped = mappings.some((mapping) =>
+                                mapping.subject_area.toLowerCase() === subjectArea.trim().toLowerCase()
+                                && String(mapping.reviewer) === String(lecturer.user_id)
+                            );
+                            const expertise = [lecturer.department, lecturer.skillset].filter(Boolean).join(' · ');
+                            return <option key={lecturer.id} value={lecturer.user_id} disabled={alreadyMapped}>
+                                {lecturer.first_name || lecturer.last_name ? `${lecturer.first_name} ${lecturer.last_name}`.trim() : lecturer.username}
+                                {expertise ? ` — ${expertise}` : ''}
+                                {alreadyMapped ? ' (already mapped)' : ''}
+                            </option>;
+                        })}
+                    </select>
+                </label>
+            </div>
+            <button className="admin-primary compact" disabled={busy || !subjectArea.trim() || !reviewerId || matchingMapping}><Plus size={16} /> Add mapping</button>
+        </form>
+        <div className="admin-table-tools"><span>{mappings.length} subject mappings</span></div>
+        <div className="admin-table-wrap"><table className="admin-table"><thead><tr><th>Subject area</th><th>Lecturer</th><th>Department</th><th>Profile skills</th><th aria-label="Actions" /></tr></thead><tbody>
+            {mappings.map((mapping) => <tr key={mapping.id}>
+                <td><strong>{mapping.subject_area}</strong></td>
+                <td><strong>{mapping.reviewer_name}</strong><span className="admin-table-sub">@{mapping.reviewer_username}</span></td>
+                <td>{mapping.department || '—'}</td>
+                <td>{mapping.skillset || '—'}</td>
+                <td><button type="button" className="admin-danger-icon" title={`Remove ${mapping.subject_area} mapping`} aria-label={`Remove ${mapping.subject_area} mapping`} disabled={deletingId === mapping.id} onClick={() => removeMapping(mapping)}><Trash2 size={16} /></button></td>
+            </tr>)}
+            {mappings.length === 0 && <tr><td colSpan="5" className="admin-empty">No subject mappings configured yet.</td></tr>}
+        </tbody></table></div>
     </>;
 }
 
 function UserRow({ user, onSave, onDelete }) {
     const [editing, setEditing] = useState(false);
-    const [details, setDetails] = useState({ first_name: user.first_name || '', last_name: user.last_name || '', email: user.email || '', department: user.department || '' });
+    const [details, setDetails] = useState({ first_name: user.first_name || '', last_name: user.last_name || '', email: user.email || '', department: user.department || '', skillset: user.skillset || '' });
     const saveDetails = async (event) => {
         event.preventDefault();
         if (await onSave(user.id, details)) setEditing(false);
     };
     return <>
-        <tr><td><strong>{user.first_name || user.last_name ? `${user.first_name} ${user.last_name}`.trim() : user.username}</strong><span className="admin-table-sub">@{user.username}{user.email ? ` · ${user.email}` : ''}</span></td><td>{user.department || '—'}</td><td>{user.role === 'ADMIN' ? 'Administrator' : user.role === 'LECTURER' ? 'Lecturer' : 'Student'}</td><td><button className={`admin-access ${user.is_active ? 'enabled' : 'disabled'}`} onClick={() => onSave(user.id, { is_active: !user.is_active })}>{user.is_active ? 'Active' : 'Disabled'}</button></td><td><div className="admin-row-actions"><button className="admin-danger-icon" title={`Edit ${user.username}`} aria-label={`Edit ${user.username}`} onClick={() => setEditing((value) => !value)}><Pencil size={15} /></button><button className="admin-danger-icon" title={`Remove ${user.username}`} aria-label={`Remove ${user.username}`} onClick={() => onDelete(user)}><Trash2 size={16} /></button></div></td></tr>
-        {editing && <tr className="admin-edit-row"><td colSpan="5"><form onSubmit={saveDetails}><div className="admin-form-grid">{[['first_name', 'First name'], ['last_name', 'Last name'], ['email', 'Email'], ['department', 'Department']].map(([field, label]) => <label key={field}>{label}<input type={field === 'email' ? 'email' : 'text'} value={details[field]} onChange={(event) => setDetails((current) => ({ ...current, [field]: event.target.value }))} /></label>)}</div><div className="admin-application-actions"><button type="button" className="admin-secondary" onClick={() => setEditing(false)}>Cancel</button><button className="admin-primary compact">Save profile details</button></div></form></td></tr>}
+        <tr><td><strong>{user.first_name || user.last_name ? `${user.first_name} ${user.last_name}`.trim() : user.username}</strong><span className="admin-table-sub">@{user.username}{user.email ? ` · ${user.email}` : ''}</span></td><td>{user.department || '—'}{user.skillset && <span className="admin-table-sub">{user.skillset}</span>}</td><td>{user.role === 'ADMIN' ? 'Administrator' : user.role === 'LECTURER' ? 'Lecturer' : 'Student'}</td><td><button className={`admin-access ${user.is_active ? 'enabled' : 'disabled'}`} onClick={() => onSave(user.id, { is_active: !user.is_active })}>{user.is_active ? 'Active' : 'Disabled'}</button></td><td><div className="admin-row-actions"><button className="admin-danger-icon" title={`Edit ${user.username}`} aria-label={`Edit ${user.username}`} onClick={() => setEditing((value) => !value)}><Pencil size={15} /></button><button className="admin-danger-icon" title={`Remove ${user.username}`} aria-label={`Remove ${user.username}`} onClick={() => onDelete(user)}><Trash2 size={16} /></button></div></td></tr>
+        {editing && <tr className="admin-edit-row"><td colSpan="5"><form onSubmit={saveDetails}><div className="admin-form-grid">{[['first_name', 'First name'], ['last_name', 'Last name'], ['email', 'Email'], ['department', 'Department'], ['skillset', 'Skills and expertise']].map(([field, label]) => <label key={field}>{label}<input type={field === 'email' ? 'email' : 'text'} maxLength={field === 'skillset' ? 500 : undefined} value={details[field]} onChange={(event) => setDetails((current) => ({ ...current, [field]: event.target.value }))} /></label>)}</div><div className="admin-application-actions"><button type="button" className="admin-secondary" onClick={() => setEditing(false)}>Cancel</button><button className="admin-primary compact">Save profile details</button></div></form></td></tr>}
     </>;
 }
 
 function CreateUser({ onCreated, onError }) {
-    const [form, setForm] = useState({ username: '', password: '', first_name: '', last_name: '', email: '', role: 'STUDENT', department: '' });
+    const [form, setForm] = useState({ username: '', password: '', first_name: '', last_name: '', email: '', role: 'STUDENT', department: '', skillset: '' });
     const [busy, setBusy] = useState(false);
     const change = (event) => setForm((current) => ({ ...current, [event.target.name]: event.target.value }));
     const submit = async (event) => {
@@ -139,7 +244,7 @@ function CreateUser({ onCreated, onError }) {
         catch (requestError) { onError(requestError.response?.data ? Object.values(requestError.response.data).flat().join(' ') : 'Unable to create account.'); }
         finally { setBusy(false); }
     };
-    return <form className="admin-panel admin-create-form" onSubmit={submit}><div className="admin-panel-heading"><div><span className="admin-panel-kicker">NEW ACCOUNT</span><h2>Create user</h2></div><button type="button" className="admin-danger-icon" title="Close" aria-label="Close" onClick={() => onCreated()}><X size={17} /></button></div><div className="admin-form-grid">{[['username', 'Username'], ['password', 'Temporary password'], ['first_name', 'First name'], ['last_name', 'Last name'], ['email', 'Email'], ['department', 'Department']].map(([name, label]) => <label key={name}>{label}<input name={name} type={name === 'password' ? 'password' : name === 'email' ? 'email' : 'text'} value={form[name]} onChange={change} required={['username', 'password'].includes(name)} minLength={name === 'password' ? 8 : undefined} /></label>)}<label>Role<select name="role" value={form.role} onChange={change}><option value="STUDENT">Student</option><option value="LECTURER">Lecturer</option></select></label></div><button className="admin-primary compact" disabled={busy}><Plus size={16} /> Create account</button></form>;
+    return <form className="admin-panel admin-create-form" onSubmit={submit}><div className="admin-panel-heading"><div><span className="admin-panel-kicker">NEW ACCOUNT</span><h2>Create user</h2></div><button type="button" className="admin-danger-icon" title="Close" aria-label="Close" onClick={() => onCreated()}><X size={17} /></button></div><div className="admin-form-grid">{[['username', 'Username'], ['password', 'Temporary password'], ['first_name', 'First name'], ['last_name', 'Last name'], ['email', 'Email'], ['department', 'Department'], ['skillset', 'Skills and expertise']].map(([name, label]) => <label key={name}>{label}<input name={name} type={name === 'password' ? 'password' : name === 'email' ? 'email' : 'text'} value={form[name]} onChange={change} required={['username', 'password'].includes(name)} minLength={name === 'password' ? 8 : undefined} maxLength={name === 'skillset' ? 500 : undefined} /></label>)}<label>Role<select name="role" value={form.role} onChange={change}><option value="STUDENT">Student</option><option value="LECTURER">Lecturer</option></select></label></div><button className="admin-primary compact" disabled={busy}><Plus size={16} /> Create account</button></form>;
 }
 
 function Broadcasts({ messages, onRefresh }) {

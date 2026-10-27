@@ -86,6 +86,9 @@
 .admin-edit-row td { padding: 15px; background: #f7f9f7; }
 .admin-edit-row .admin-form-grid { grid-template-columns: repeat(4, minmax(110px, 1fr)); }
 .admin-create-form { margin-bottom: 15px; }
+.admin-mapping-note { margin: -5px 0 15px; color: var(--admin-muted); font-size: 12px; line-height: 1.5; }
+.admin-mapping-form { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.admin-mapping-form select { min-height: 37px; padding: 8px 10px; font-size: 12px; }
 .admin-form-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-bottom: 15px; }
 .admin-form-grid label, .admin-login-form label, .admin-broadcast-form label { display: grid; gap: 6px; color: #50646a; font-size: 11px; font-weight: 700; }
 .admin-form-grid input, .admin-form-grid select, .admin-login-form input, .admin-login-form select, .admin-broadcast-form input, .admin-broadcast-form textarea { width: 100%; min-height: 37px; padding: 8px 10px; box-sizing: border-box; border: 1px solid #cfdbd8; border-radius: 4px; outline-color: #0c766f; color: var(--admin-ink); background: #fff; font: inherit; font-size: 12px; }
