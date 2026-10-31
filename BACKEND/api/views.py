@@ -429,6 +429,18 @@ class CurrentUserProfileView(generics.RetrieveUpdateAPIView):
         )
         return profile
 
+class SubjectAreaListView(APIView):
+    permission_classes = [permissions.AllowAny]
+
+    def get(self, request):
+        subject_areas = [
+            {
+                'value': value,
+                'label': label,
+            }
+            for value, label in Publication.SUBJECT_AREA_CHOICES
+        ]
+        return Response(subject_areas)
 
 class SupervisorListView(generics.ListAPIView):
     permission_classes = [permissions.AllowAny]

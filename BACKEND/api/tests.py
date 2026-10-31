@@ -13,7 +13,7 @@ from .serializers import RepositoryTokenObtainPairSerializer
 class TokenClaimsTests(TestCase):
     def test_token_includes_username_and_profile_role(self):
         user = User.objects.create_user(username='lecturer', password='test-password')
-        UserProfile.objects.create(user=user, role='LECTURER', department='Computing')
+        UserProfile.objects.create(user=user, role='LECTURER', department='Computer Science')
 
         token = RepositoryTokenObtainPairSerializer.get_token(user)
 
@@ -220,8 +220,7 @@ class PublicationTests(APITestCase):
             password='test-password',
             email=f'{username}@example.com',
         )
-        profile = UserProfile.objects.create(user=user, role='LECTURER', department='Computing')
-        ReviewerSubjectArea.objects.get_or_create(reviewer=user, subject_area='Computing')
+        profile = UserProfile.objects.create(user=user, role='LECTURER', department='Computer Science')
         ReviewerSubjectArea.objects.get_or_create(reviewer=user, subject_area='Computer Science')
         return user, profile
 
@@ -234,7 +233,7 @@ class PublicationTests(APITestCase):
         profile = UserProfile.objects.create(
             user=user,
             role=role,
-            department='Computing',
+            department='Computer Science',
         )
         return user, profile
 
@@ -244,7 +243,7 @@ class PublicationTests(APITestCase):
             title=fields.pop('title', 'Review test paper'),
             abstract=fields.pop('abstract', 'Abstract'),
             pub_type=fields.pop('pub_type', 'JOURNAL'),
-            subject_area=fields.pop('subject_area', 'Computing'),
+            subject_area=fields.pop('subject_area', 'Computer Science'),
             **fields,
         )
         PublicationReviewInvitation.objects.create(
@@ -280,12 +279,12 @@ class PublicationTests(APITestCase):
         other_lecturer, _ = self.create_supervisor('other-subject-lecturer')
         ReviewerSubjectArea.objects.create(
             reviewer=matching_lecturer,
-            subject_area='Neuroscience',
+            subject_area='Artificial Intelligence',
         )
 
         response = self.client.get(
             reverse('supervisor_list'),
-            {'subject_area': 'neuroscience'},
+            {'subject_area': 'artificial intelligence'},
         )
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
@@ -301,11 +300,11 @@ class PublicationTests(APITestCase):
 
         ReviewerSubjectArea.objects.create(
             reviewer=reviewer,
-            subject_area='Neuroscience',
+            subject_area='Artificial Intelligence',
         )
         ReviewerSubjectArea.objects.create(
             reviewer=other_reviewer,
-            subject_area='Neuroscience',
+            subject_area='Artificial Intelligence',
         )
 
         self.client.force_authenticate(user=owner)
@@ -316,7 +315,7 @@ class PublicationTests(APITestCase):
                 'title': 'Automatically assigned paper',
                 'abstract': 'Abstract',
                 'pub_type': 'JOURNAL',
-                'subject_area': 'neuroscience',
+                'subject_area': 'Artificial Intelligence',
                 'file_attachment': self.manuscript_upload(),
             },
             format='multipart',
@@ -370,7 +369,7 @@ class PublicationTests(APITestCase):
             'title': 'Manuscript required',
             'abstract': 'Abstract',
             'pub_type': 'JOURNAL',
-            'subject_area': 'Computing',
+            'subject_area': 'Computer Science',
         }
 
         missing = self.client.post(reverse('publication-list'), payload, format='json')
@@ -397,7 +396,7 @@ class PublicationTests(APITestCase):
         mapped_supervisor, _ = self.create_supervisor('unanswered-mapped-supervisor')
         replacement_supervisor, _ = self.create_supervisor('unanswered-replacement-supervisor')
         owner, _ = self.create_member('unanswered-assignment-owner')
-        ReviewerSubjectArea.objects.create(reviewer=mapped_supervisor, subject_area='Astrophysics')
+        ReviewerSubjectArea.objects.create(reviewer=mapped_supervisor, subject_area='Data Science')
         self.client.force_authenticate(user=owner)
         created = self.client.post(
             reverse('publication-list'),
@@ -405,9 +404,8 @@ class PublicationTests(APITestCase):
                 'title': 'Unanswered review assignment',
                 'abstract': 'Abstract',
                 'pub_type': 'JOURNAL',
-                'subject_area': 'Astrophysics',
-                'file_attachment': self.manuscript_upload(),
-            },
+                'subject_area': 'Data Science',
+                'file_attachment': self.manuscript_upload(),            },
             format='multipart',
         )
         self.assertEqual(created.status_code, status.HTTP_201_CREATED, created.data)
@@ -429,7 +427,7 @@ class PublicationTests(APITestCase):
         declined_supervisor, _ = self.create_supervisor('declined-mapped-supervisor')
         replacement_supervisor, _ = self.create_supervisor('declined-replacement-supervisor')
         owner, _ = self.create_member('declined-assignment-owner')
-        ReviewerSubjectArea.objects.create(reviewer=declined_supervisor, subject_area='Astrophysics')
+        ReviewerSubjectArea.objects.create(reviewer=declined_supervisor, subject_area='Data Science')
         self.client.force_authenticate(user=owner)
         created = self.client.post(
             reverse('publication-list'),
@@ -437,7 +435,7 @@ class PublicationTests(APITestCase):
                 'title': 'Declined review assignment',
                 'abstract': 'Abstract',
                 'pub_type': 'JOURNAL',
-                'subject_area': 'Astrophysics',
+                'subject_area': 'Data Science',
                 'file_attachment': self.manuscript_upload(),
             },
             format='multipart',
@@ -472,7 +470,7 @@ class PublicationTests(APITestCase):
         supervisor, _ = self.create_supervisor('accepted-assignment-supervisor')
         replacement_supervisor, _ = self.create_supervisor('accepted-replacement-supervisor')
         owner, _ = self.create_member('accepted-assignment-owner')
-        ReviewerSubjectArea.objects.create(reviewer=supervisor, subject_area='Astrophysics')
+        ReviewerSubjectArea.objects.create(reviewer=supervisor, subject_area='Data Science')
         self.client.force_authenticate(user=owner)
         created = self.client.post(
             reverse('publication-list'),
@@ -480,9 +478,8 @@ class PublicationTests(APITestCase):
                 'title': 'Accepted review assignment',
                 'abstract': 'Abstract',
                 'pub_type': 'JOURNAL',
-                'subject_area': 'Astrophysics',
-                'file_attachment': self.manuscript_upload(),
-            },
+                'subject_area': 'Data Science',
+                'file_attachment': self.manuscript_upload(),            },
             format='multipart',
         )
         publication_id = created.data['id']
@@ -609,7 +606,7 @@ class PublicationTests(APITestCase):
     def test_public_registration_cannot_grant_privileged_role(self):
         response = self.client.post(
             reverse('user_register'),
-            {'username': 'self-reviewer', 'password': 'test-password', 'role': 'REVIEWER', 'department': 'Computing'},
+            {'username': 'self-reviewer', 'password': 'test-password', 'role': 'REVIEWER', 'department': 'Computer Science'},
             format='json',
         )
 
@@ -650,14 +647,14 @@ class PublicationTests(APITestCase):
 
     def test_current_profile_returns_personal_data_and_owned_publication_stats(self):
         user = User.objects.create_user(username='profile-user', password='test-password', first_name='Ari', last_name='Researcher', email='ari@example.com')
-        profile = UserProfile.objects.create(user=user, role='LECTURER', department='Computing')
+        profile = UserProfile.objects.create(user=user, role='LECTURER', department='Computer Science')
         self.client.force_authenticate(user=user)
         publication = Publication.objects.create(
             title='My publication',
             owner=user,
             abstract='Abstract',
             pub_type='JOURNAL',
-            subject_area='Computing',
+            subject_area='Computer Science',
             download_count=4,
             is_approved=True,
         )
@@ -680,7 +677,7 @@ class PublicationTests(APITestCase):
         self.client.force_authenticate(user=owner)
         create_response = self.client.post(
             reverse('publication-list'),
-            {'title': 'Owned paper', 'abstract': 'Abstract', 'pub_type': 'JOURNAL', 'subject_area': 'Computing', 'supervisor': supervisor.user_id, 'file_attachment': self.manuscript_upload()},
+            {'title': 'Owned paper', 'abstract': 'Abstract', 'pub_type': 'JOURNAL', 'subject_area': 'Computer Science', 'supervisor': supervisor.user_id, 'file_attachment': 			self.manuscript_upload()},
             format='multipart',
         )
         publication_id = create_response.data['id']
@@ -698,7 +695,7 @@ class PublicationTests(APITestCase):
         owner, _ = self.create_member('approved-owner', None)
         publication = Publication.objects.create(
             title='Approved paper', owner=owner, abstract='Original abstract',
-            pub_type='JOURNAL', subject_area='Computing', is_approved=True,
+            pub_type='JOURNAL', subject_area='Computer Science', is_approved=True,
         )
         self.client.force_authenticate(user=owner)
 
@@ -716,7 +713,7 @@ class PublicationTests(APITestCase):
         owner = User.objects.create_user(username='public-view-owner', password='test-password')
         publication = Publication.objects.create(
             title='Public view paper', owner=owner, abstract='Abstract',
-            pub_type='JOURNAL', subject_area='Computing', is_approved=True,
+            pub_type='JOURNAL', subject_area='Computer Science', is_approved=True,
             file_attachment=SimpleUploadedFile('public-view.pdf', b'%PDF-1.4 view', content_type='application/pdf'),
         )
 
@@ -734,7 +731,7 @@ class PublicationTests(APITestCase):
         reader, _ = self.create_member('public-reader', reviewer_profile)
         approved = Publication.objects.create(
             title='Verified paper', owner=owner, abstract='Public abstract',
-            pub_type='JOURNAL', subject_area='Computing', is_approved=True,
+            pub_type='JOURNAL', subject_area='Computer Science', is_approved=True,
         )
         pending = self.create_review_publication(
             owner, reviewer, title='Pending paper', abstract='Private abstract',
@@ -835,7 +832,7 @@ class PublicationTests(APITestCase):
             owner=member,
             abstract='Personal draft abstract',
             pub_type='JOURNAL',
-            subject_area='Computing',
+            subject_area='Computer Science',
         )
         lecturer, _ = self.create_supervisor('review-assignment-lecturer')
         assigned_for_review = self.create_review_publication(
@@ -848,7 +845,7 @@ class PublicationTests(APITestCase):
             owner=other_owner,
             abstract='An approved repository record',
             pub_type='JOURNAL',
-            subject_area='Computing',
+            subject_area='Computer Science',
             is_approved=True,
         )
         self.client.force_authenticate(user=member)
@@ -882,9 +879,8 @@ class PublicationTests(APITestCase):
                 'title': 'Approval paper',
                 'abstract': 'Abstract',
                 'pub_type': 'JOURNAL',
-                'subject_area': 'Computing',
-                'file_attachment': self.manuscript_upload(),
-            },
+                'subject_area': 'Computer Science',
+                'file_attachment': self.manuscript_upload(),            },
             format='multipart',
         )
 
@@ -941,7 +937,7 @@ class PublicationTests(APITestCase):
                 'title': 'Revision test paper',
                 'abstract': 'Initial abstract',
                 'pub_type': 'JOURNAL',
-                'subject_area': 'Computing',
+                'subject_area': 'Computer Science',
                 'supervisor': reviewer.id,
                 'file_attachment': self.manuscript_upload(),
             },
@@ -989,7 +985,7 @@ class PublicationTests(APITestCase):
                 'title': 'Optional co-supervisor test',
                 'abstract': 'Abstract',
                 'pub_type': 'JOURNAL',
-                'subject_area': 'Computing',
+                'subject_area': 'Computer Science',
                 'supervisor': supervisor.id,
                 'co_supervisor': co_supervisor.id,
                 'file_attachment': self.manuscript_upload(),
@@ -1004,7 +1000,7 @@ class PublicationTests(APITestCase):
                 'title': 'Optional co-supervisor test',
                 'abstract': 'Updated abstract',
                 'pub_type': 'JOURNAL',
-                'subject_area': 'Computing',
+                'subject_area': 'Computer Science',
                 'supervisor': str(supervisor.id),
                 'co_supervisor': '',
             },
@@ -1042,7 +1038,7 @@ class PublicationTests(APITestCase):
         self.client.force_authenticate(user=owner)
         create_response = self.client.post(
             reverse('publication-list'),
-            {'title': 'Delete request paper', 'abstract': 'Abstract', 'pub_type': 'JOURNAL', 'subject_area': 'Computing', 'supervisor': supervisor.user_id, 'file_attachment': self.manuscript_upload()},
+            {'title': 'Delete request paper', 'abstract': 'Abstract', 'pub_type': 'JOURNAL', 'subject_area': 'Computer Science', 'supervisor': supervisor.user_id, 'file_attachment': 		self.manuscript_upload()},
             format='multipart',
         )
         publication_id = create_response.data['id']
@@ -1071,7 +1067,7 @@ class PublicationTests(APITestCase):
                 'last_name': 'Researcher',
                 'physical_address': 'Gaborone',
                 'occupation': 'Lecturer',
-                'department': 'Computing',
+                'department': 'Computer Science',
                 'institution': 'UB',
             },
             format='json',
@@ -1095,7 +1091,7 @@ class PublicationTests(APITestCase):
                 'title': 'Collaborative paper',
                 'abstract': 'A paper with a selected author.',
                 'pub_type': 'JOURNAL',
-                'subject_area': 'Computing',
+                'subject_area': 'Computer Science',
                 'authors': [author.id],
                 'supervisor': supervisor.user_id,
                 'file_attachment': self.manuscript_upload(),

@@ -55,6 +55,13 @@ class AuthorProfile(models.Model):
         return self.user.get_full_name() if self.user else f"Author {self.pk}"
 
 class Publication(models.Model):
+    SUBJECT_AREA_CHOICES = [
+        ('Computer Science', 'Computer Science'),
+        ('Software Engineering', 'Software Engineering'),
+        ('Artificial Intelligence', 'Artificial Intelligence'),
+        ('Data Science', 'Data Science'),
+        ('Cybersecurity', 'Cybersecurity'),
+    ]
     REVIEW_STATUS_CHOICES = [
         ('PENDING_INVITATIONS', 'Waiting for invited reviewers'),
         ('PENDING', 'Pending review'),
@@ -75,7 +82,7 @@ class Publication(models.Model):
     assigned_reviewer = models.ForeignKey(User, on_delete=models.SET_NULL, related_name='assigned_publications', blank=True, null=True)
     abstract = models.TextField()
     pub_type = models.CharField(max_length=20, choices=PUBLICATION_TYPES)
-    subject_area = models.CharField(max_length=100)
+    subject_area = models.CharField(max_length=100, choices=SUBJECT_AREA_CHOICES)
     authors = models.ManyToManyField(AuthorProfile, related_name='publications')
     file_attachment = models.FileField(upload_to='publications/%Y/%m/', blank=True, null=True)
     download_count = models.PositiveIntegerField(default=0)

@@ -29,6 +29,7 @@ export default function Publications({ user }) {
     const [abstract, setAbstract] = useState('');
     const [pubType, setPubType] = useState('JOURNAL');
     const [subject, setSubject] = useState('');
+    const [subjectAreas, setSubjectAreas] = useState([]);
     const [file, setFile] = useState(null);
     const [selectedAuthors, setSelectedAuthors] = useState([]);
     const [showAuthorModal, setShowAuthorModal] = useState(false);
@@ -190,47 +191,76 @@ export default function Publications({ user }) {
     );
 
     useEffect(() => {
+        if (!canWrite) return;
+
+        API.get('subject-areas/')
+            .then(({ data }) => {
+                setSubjectAreas(Array.isArray(data) ? data : []);
+            })
+            .catch((err) => {
+                console.error('Unable to load subject areas:', err);
+                setSubjectAreas([]);
+            });
+    }, [canWrite]);
+
+    useEffect(() => {
         if (!canWrite) {
             setSupervisorLoading(false);
             return;
         }
-        if (!subject.trim() && !editingId) {
-            setSupervisors([]);
+
+        // Do not look for a reviewer until a subject area has been selected.
+        if (!subject.trim() && !editingId) {            setSupervisors([]);
             setSupervisorId('');
             setCoSupervisorId('');
             setSupervisorError('');
             setSupervisorLoading(false);
             return;
         }
+
         let isCurrentRequest = true;
+
         setSupervisorLoading(true);
         setSupervisorError('');
-        const query = subject.trim()
-            ? `?subject_area=${encodeURIComponent(subject.trim())}`
-            : '';
+
+        const query = `?subject_area=${encodeURIComponent(subject.trim())}`;
+
         API.get(`users/supervisors/${query}`)
             .then(({ data }) => {
                 if (!isCurrentRequest) return;
+
                 const lecturers = Array.isArray(data) ? data : [];
                 setSupervisors(lecturers);
-                const matchingSupervisor = lecturers.find((lecturer) => lecturer.is_subject_match) || lecturers[0];
-                if (matchingSupervisor && !editingId) {
-                    setSupervisorId(String(matchingSupervisor.user_id));
-                    const matchingCoSupervisor = lecturers.find(
-                        (lecturer) => lecturer.is_subject_match && lecturer.user_id !== matchingSupervisor.user_id
-                    );
-                    setCoSupervisorId(matchingCoSupervisor ? String(matchingCoSupervisor.user_id) : '');
-                }
+                const matchingReviewer = lecturers.find(
+                    (lecturer) => lecturer.is_subject_match
+                );
+
+                if (matchingReviewer && !editingId) {
+                    setSupervisorId(String(matchingReviewer.user_id));
+
+                    // New publications use one reviewer only.
+                    setCoSupervisorId('');                }
             })
             .catch((err) => {
                 if (!isCurrentRequest) return;
-                console.error('Unable to load lecturer supervisors:', err);
-                setSupervisorError(getErrorMessage(err, 'Unable to load the lecturer list.'));
+
+                console.error('Unable to load subject reviewer:', err);
+                setSupervisorError(
+                    getErrorMessage(
+                        err,
+                        'Unable to load the reviewer for this subject area.'
+                    )
+                );
             })
             .finally(() => {
-                if (isCurrentRequest) setSupervisorLoading(false);
+                if (isCurrentRequest) {
+                    setSupervisorLoading(false);
+                }
             });
-        return () => { isCurrentRequest = false; };
+
+        return () => {
+            isCurrentRequest = false;
+        };
     }, [canWrite, subject, editingId]);
 
     useEffect(() => {
@@ -740,8 +770,25 @@ export default function Publications({ user }) {
                         </div>
                         {selectedAuthors.length > 0 && <p style={{ margin: '-8px 0 0', color: '#475569', fontSize: '0.8rem' }}>Authors: {selectedAuthors.map((author) => author.name || `${author.first_name} ${author.last_name}`).join('; ')}</p>}
                         <div>
-                            <label htmlFor="publication-subject" style={labelStyle}>Subject Area (required)</label>
-                            <input id="publication-subject" type="text" value={subject} onChange={e => setSubject(e.target.value)} required style={formInputStyle}/>
+                            <label htmlFor="publication-subject" style={labelStyle}>
+                                Subject Area (required)
+                            </label>
+
+                            <select
+                                id="publication-subject"
+                                value={subject}
+                                onChange={(e) => setSubject(e.target.value)}
+                                required
+                                style={formInputStyle}
+                            >
+                                <option value="">Select a subject area</option>
+
+                                {subjectAreas.map((area) => (
+                                    <option key={area.value} value={area.value}>
+                                        {area.label}
+                                    </option>
+                                ))}
+                            </select>
                         </div>
                         <div>
                             {editingId && (canChangeSupervisor || canChangeCoSupervisor) ? (
@@ -777,8 +824,18 @@ export default function Publications({ user }) {
                                     Reviewers have responded or accepted their invitations. Reviewer assignments are locked while review is in progress.
                                 </p>
                             ) : !subject.trim() && !editingId ? (
-                                <p role="status" style={{ color: '#64748b', fontSize: '0.85rem' }}>Enter a subject area to find a suitable lecturer.</p>
+                                <p style={{ margin: 0, color: '#64748b', fontSize: '0.85rem' }}>
+                                    Select a subject area to see the assigned reviewer.
+                                </p>
                             ) : supervisorLoading ? (
+                                <p role="status" style={{ color: '#64748b', fontSize: '0.85rem' }}>
+                                    <LoaderCircle
+                                        size={15}
+                                        className="publication-spinner"
+                                        aria-hidden="true"
+                                    />{' '}
+                                    Finding assigned reviewer…
+                                </p>                            ) : supervisorLoading ? (
                                 <p role="status" style={{ color: '#64748b', fontSize: '0.85rem' }}><LoaderCircle size={15} className="publication-spinner" aria-hidden="true" /> Finding subject-matched supervisors…</p>
                             ) : supervisorError ? (
                                 <p role="alert" style={{ color: '#b91c1c', fontSize: '0.85rem' }}>{supervisorError}</p>
@@ -792,8 +849,7 @@ export default function Publications({ user }) {
                                 </div>
                             ) : (
                                 <p role="alert" style={{ margin: 0, color: '#b91c1c', fontSize: '0.85rem' }}>
-                                    No active lecturers are available to review this publication. Contact an administrator.
-                                </p>
+                                    No reviewer is mapped to this subject area. Contact an administrator to configure the subject mapping before submitting.                                				</p>
                             )}
                         </div>
                         <div>
