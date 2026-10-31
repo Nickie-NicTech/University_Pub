@@ -6,7 +6,7 @@ from django.db import migrations, models
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('api', '0013_merge_subject_routing_and_supervisor_reviews'),
+        ('api', '0016_normalize_engineering_subject_typo'),
     ]
 
     operations = [

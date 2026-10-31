@@ -9,6 +9,7 @@ const emptyProfile = {
     email: '',
     role: '',
     department: '',
+    skillset: '',
     profile_picture: '',
     uploaded_materials: 0,
     approved_materials: 0,
@@ -51,7 +52,7 @@ export default function AccountSidebar({ username }) {
         setSaving(true);
         setMessage('');
         const data = new FormData();
-        ['first_name', 'last_name', 'email', 'department'].forEach((field) => data.append(field, profile[field] || ''));
+        ['first_name', 'last_name', 'email', 'department', 'skillset'].forEach((field) => data.append(field, profile[field] || ''));
         if (picture) data.append('profile_picture', picture);
         try {
             const response = await API.patch('users/me/', data);
@@ -101,6 +102,12 @@ export default function AccountSidebar({ username }) {
                                 <label style={labelStyle}>Last name<input name="last_name" value={profile.last_name} onChange={updateField} style={inputStyle} /></label>
                                 <label style={labelStyle}>Email<input type="email" name="email" value={profile.email} onChange={updateField} style={inputStyle} /></label>
                                 <label style={labelStyle}>Department<input name="department" value={profile.department} onChange={updateField} style={inputStyle} /></label>
+                                {profile.role === 'LECTURER' && (
+                                    <label style={labelStyle}>
+                                        Skills and expertise
+                                        <textarea name="skillset" value={profile.skillset} onChange={updateField} maxLength={500} placeholder="e.g. software engineering, databases, machine learning" style={{ ...inputStyle, minHeight: '76px', resize: 'vertical' }} />
+                                    </label>
+                                )}
                                 <button type="submit" disabled={saving} style={saveButtonStyle}>
                                     {saving ? <LoaderCircle size={15} /> : <Save size={15} />}
                                     Save profile

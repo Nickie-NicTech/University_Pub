@@ -1,6 +1,6 @@
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
-from .views import PublicationViewSet, AuthorViewSet, UserRegistrationView, CurrentUserProfileView, SupervisorListView, SubjectAreaListView, UserNotificationListView, UserNotificationReadView, AdminPortalLoginView, AdminUserListCreateView, AdminUserDetailView, AdminAnalyticsView, AdminUniversityDirectoryView, BroadcastMessageView, AdminBroadcastListView, AdminBroadcastDetailView
+from .views import PublicationViewSet, AuthorViewSet, UserRegistrationView, CurrentUserProfileView, SupervisorListView, SubjectAreaListView, UserNotificationListView, UserNotificationReadView, AdminPortalLoginView, AdminUserListCreateView, AdminUserDetailView, AdminSubjectMappingListCreateView, AdminSubjectMappingDetailView, AdminAnalyticsView, AdminUniversityDirectoryView, BroadcastMessageView, AdminBroadcastListView, AdminBroadcastDetailView
 
 router = DefaultRouter()
 router.register(r'publications', PublicationViewSet)
@@ -16,6 +16,8 @@ urlpatterns = [
     path('users/notifications/<int:pk>/read/', UserNotificationReadView.as_view(), name='user_notification_read'),
     path('admin/users/', AdminUserListCreateView.as_view(), name='admin_user_list'),
     path('admin/users/<int:pk>/', AdminUserDetailView.as_view(), name='admin_user_detail'),
+    path('admin/subject-mappings/', AdminSubjectMappingListCreateView.as_view(), name='admin_subject_mapping_list'),
+    path('admin/subject-mappings/<int:pk>/', AdminSubjectMappingDetailView.as_view(), name='admin_subject_mapping_detail'),
     path('admin/analytics/', AdminAnalyticsView.as_view(), name='admin_analytics'),
     path('admin/university-directory/', AdminUniversityDirectoryView.as_view(), name='admin_university_directory'),
     path('admin/broadcasts/', AdminBroadcastListView.as_view(), name='admin_broadcast_list'),

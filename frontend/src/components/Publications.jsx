@@ -171,7 +171,7 @@ export default function Publications({ user }) {
     const hasSearchFilters = Boolean(
         search.trim() || publicationTypes.length || authorFilter.trim() || subjectFilter.trim()
     );
-    const mappedSupervisors = supervisors.filter((lecturer) => lecturer.is_subject_match);
+    const rankedSupervisors = supervisors.slice(0, 1);
     const reviewInvitations = editingPublication?.review_invitations || [];
     const noReviewersResponded = reviewInvitations.length > 0
         && reviewInvitations.every((invitation) => invitation.status === 'INVITED');
@@ -204,11 +204,13 @@ export default function Publications({ user }) {
     }, [canWrite]);
 
     useEffect(() => {
-        if (!canWrite) return;
+        if (!canWrite) {
+            setSupervisorLoading(false);
+            return;
+        }
 
         // Do not look for a reviewer until a subject area has been selected.
-        if (!subject.trim()) {
-            setSupervisors([]);
+        if (!subject.trim() && !editingId) {            setSupervisors([]);
             setSupervisorId('');
             setCoSupervisorId('');
             setSupervisorError('');
@@ -229,7 +231,6 @@ export default function Publications({ user }) {
 
                 const lecturers = Array.isArray(data) ? data : [];
                 setSupervisors(lecturers);
-
                 const matchingReviewer = lecturers.find(
                     (lecturer) => lecturer.is_subject_match
                 );
@@ -238,8 +239,7 @@ export default function Publications({ user }) {
                     setSupervisorId(String(matchingReviewer.user_id));
 
                     // New publications use one reviewer only.
-                    setCoSupervisorId('');
-                }
+                    setCoSupervisorId('');                }
             })
             .catch((err) => {
                 if (!isCurrentRequest) return;
@@ -823,7 +823,7 @@ export default function Publications({ user }) {
                                 <p style={{ margin: 0, color: '#475569', fontSize: '.85rem' }}>
                                     Reviewers have responded or accepted their invitations. Reviewer assignments are locked while review is in progress.
                                 </p>
-                            ) : !subject.trim() ? (
+                            ) : !subject.trim() && !editingId ? (
                                 <p style={{ margin: 0, color: '#64748b', fontSize: '0.85rem' }}>
                                     Select a subject area to see the assigned reviewer.
                                 </p>
@@ -835,22 +835,21 @@ export default function Publications({ user }) {
                                         aria-hidden="true"
                                     />{' '}
                                     Finding assigned reviewer…
-                                </p>
-                            ) : supervisorLoading ? (
+                                </p>                            ) : supervisorLoading ? (
                                 <p role="status" style={{ color: '#64748b', fontSize: '0.85rem' }}><LoaderCircle size={15} className="publication-spinner" aria-hidden="true" /> Finding subject-matched supervisors…</p>
                             ) : supervisorError ? (
                                 <p role="alert" style={{ color: '#b91c1c', fontSize: '0.85rem' }}>{supervisorError}</p>
-                            ) : mappedSupervisors.length > 0 ? (
+                            ) : rankedSupervisors.length > 0 ? (
                                 <div role="status" style={{ padding: '10px 12px', border: '1px solid #bae6fd', borderRadius: 6, background: '#f0f9ff', color: '#075985', fontSize: '.85rem' }}>
-                                    <strong>Reviewer assigned automatically from this subject area</strong>
+                                    <strong>{rankedSupervisors[0].is_subject_match ? 'Reviewer matched automatically using lecturer expertise' : 'Best available lecturer selected automatically'}</strong>
                                     <div style={{ marginTop: 5 }}>
-                                        Assigned to: {mappedSupervisors[0].name} — {mappedSupervisors[0].department}
+                                        Assigned to: {rankedSupervisors[0].name} — {rankedSupervisors[0].department}
+                                        {rankedSupervisors[0].skillset ? ` · Skills: ${rankedSupervisors[0].skillset}` : ''}
                                     </div>
                                 </div>
                             ) : (
                                 <p role="alert" style={{ margin: 0, color: '#b91c1c', fontSize: '0.85rem' }}>
-                                    No reviewer is mapped to this subject area. Contact an administrator to configure the subject mapping before submitting.
-                                </p>
+                                    No reviewer is mapped to this subject area. Contact an administrator to configure the subject mapping before submitting.                                				</p>
                             )}
                         </div>
                         <div>
@@ -867,11 +866,14 @@ export default function Publications({ user }) {
                             </select>
                         </div>                                              
                         <div>
-                            <label htmlFor="publication-file" style={labelStyle}>File Attachment (PDF, optional)</label>
-                            <input id="publication-file" type="file" accept=".pdf" onChange={e => setFile(e.target.files[0])} style={formInputStyle}/>
+                            <label htmlFor="publication-file" style={labelStyle}>Manuscript (PDF, {editingId ? 'optional' : 'required'})</label>
+                            <input id="publication-file" type="file" accept=".pdf,application/pdf" required={!editingId} onChange={e => setFile(e.target.files[0])} style={formInputStyle}/>
+                            {editingId && editingPublication?.file_attachment && !file && (
+                                <p style={{ margin: '4px 0 0', color: '#64748b', fontSize: '.8rem' }}>The current manuscript will be kept unless you choose a replacement PDF.</p>
+                            )}
                         </div>
                         <div style={{ display: 'flex', gap: '12px' }}>
-                            <button type="submit" disabled={publicationSaving || (!editingId && (supervisorLoading || Boolean(supervisorError) || mappedSupervisors.length === 0))} style={{ padding: '10px 16px', backgroundColor: '#0284c7', color: '#fff', border: 'none', borderRadius: '6px', cursor: publicationSaving ? 'wait' : 'pointer', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: '7px' }}>{publicationSaving && <LoaderCircle size={16} className="publication-spinner" aria-hidden="true" />}{publicationSaving ? 'Saving…' : editingId ? 'Update Publication' : 'Submit Publication'}</button>
+                            <button type="submit" disabled={publicationSaving || (!editingId && (!subject.trim() || supervisorLoading || Boolean(supervisorError) || supervisors.length === 0))} style={{ padding: '10px 16px', backgroundColor: '#0284c7', color: '#fff', border: 'none', borderRadius: '6px', cursor: publicationSaving ? 'wait' : 'pointer', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: '7px' }}>{publicationSaving && <LoaderCircle size={16} className="publication-spinner" aria-hidden="true" />}{publicationSaving ? 'Saving…' : editingId ? 'Update Publication' : 'Submit Publication'}</button>
                             {editingId && <button type="button" onClick={() => { clearForm(); setShowSubmissionForm(false); }} style={{ padding: '10px 16px', backgroundColor: '#e2e8f0', color: '#475569', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: 600 }}>Cancel Edit</button>}
                         </div>
                         </form>
