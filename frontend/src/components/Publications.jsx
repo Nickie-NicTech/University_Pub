@@ -650,11 +650,7 @@ export default function Publications({ user }) {
                                     ? `Showing your ${publications.length} personal publication${publications.length === 1 ? '' : 's'}. Search or apply a filter to browse the repository.`
                                     : `Showing ${publications.length} result${publications.length === 1 ? '' : 's'}${search.trim() ? ` for “${search.trim()}”` : ''}.`}
                     </p>
-                    {actionFeedback && (
-                        <p role={actionFeedback.type === 'error' ? 'alert' : 'status'} style={feedbackStyle(actionFeedback.type)}>
-                            {actionFeedback.message}
-                        </p>
-                    )}
+    
 
                     {/* Timeline Loop */}
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
@@ -753,14 +749,25 @@ export default function Publications({ user }) {
             {canWrite && showSubmissionForm && (
                 <div role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setShowSubmissionForm(false); }} style={submissionBackdropStyle}>
                     <section role="dialog" aria-modal="true" aria-labelledby="submission-title" style={submissionPanelStyle}>
+                        <div>
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px' }}>
+                           
                             <div>
                                 <span style={{ color: '#64748b', fontSize: '0.72rem', fontWeight: 700, letterSpacing: '0.06em', textTransform: 'uppercase' }}>{editingId ? 'Update repository record' : 'Contribute to the repository'}</span>
                                 <h3 id="submission-title" style={{ margin: '4px 0 0', color: '#1e293b' }}>{editingId ? 'Edit publication' : 'Submit research output'}</h3>
+                                
                             </div>
+                             
                             <button type="button" title="Close form" aria-label="Close publication form" onClick={() => setShowSubmissionForm(false)} style={iconButtonStyle}><X size={18} /></button>
                         </div>
+                        {actionFeedback && (
+                        <p role={actionFeedback.type === 'error' ? 'alert' : 'status'} style={feedbackStyle(actionFeedback.type)}>
+                            {actionFeedback.message}
+                        </p>
+                    )}
+                    </div>
                         <form onSubmit={handleSave} style={{ display: 'flex', minHeight: 0, flexDirection: 'column', gap: '16px', overflowY: 'auto', overscrollBehavior: 'contain', padding: '2px' }}>
+                        
                         <div style={{ display: 'flex', alignItems: 'end', gap: '8px' }}>
                             <div style={{ flex: 1 }}><label htmlFor="publication-title" style={labelStyle}>Publication Title (required)</label><input id="publication-title" type="text" value={title} onChange={e => setTitle(e.target.value)} required style={formInputStyle}/></div>
                             <button type="button" title="Add or select publication authors" aria-label="Add or select publication authors" onClick={() => { setAuthorSearchLoading(true); setAuthorSearchError(''); setAuthorFeedback(null); setShowAuthorModal(true); }} style={{ ...iconButtonStyle, height: '40px', minWidth: '42px', color: '#0369a1' }}>
@@ -852,6 +859,7 @@ export default function Publications({ user }) {
                                     No reviewer is mapped to this subject area. Contact an administrator to configure the subject mapping before submitting.                                				</p>
                             )}
                         </div>
+
                         <div>
                             <label htmlFor="publication-abstract" style={labelStyle}>Abstract Description (required)</label>
                             <textarea id="publication-abstract" value={abstract} onChange={e => setAbstract(e.target.value)} required style={{ ...formInputStyle, height: '100px', resize: 'vertical' }}></textarea>
@@ -859,10 +867,8 @@ export default function Publications({ user }) {
                         <div>
                             <label htmlFor="publication-type" style={labelStyle}>Publication Type (required)</label>
                             <select id="publication-type" value={pubType} onChange={e => setPubType(e.target.value)} required style={formInputStyle}>
-                                <option value="JOURNAL">Journal Article</option>
-                                <option value="CONFERENCE">Conference Paper</option>
-                                <option value="THESIS">Thesis</option>
-                                <option value="DISSERTATION">Dissertation</option>
+                                {user.role === 'STUDENT' ? (<><option value="THESIS">Thesis</option> <option value="DISSERTATION">Dissertation</option></>) :  (<><option value="JOURNAL">Journal</option> <option value="CONFERENCE">Conference Paper</option></>) }
+
                             </select>
                         </div>                                              
                         <div>

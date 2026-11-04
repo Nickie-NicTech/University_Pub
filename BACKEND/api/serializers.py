@@ -115,6 +115,17 @@ class PublicationSerializer(serializers.ModelSerializer):
         fields = ['id', 'title', 'abstract', 'pub_type', 'subject_area', 'authors', 'authors_details', 'supervisor', 'co_supervisor', 'supervisor_id', 'co_supervisor_id', 'supervisor_name', 'co_supervisor_name', 'review_invitations', 'review_invitation_status', 'my_review_decision', 'file_attachment', 'download_count', 'upload_date', 'is_approved', 'review_status', 'review_feedback', 'owner_username', 'is_owner', 'is_reviewer', 'is_invited_reviewer']
         read_only_fields = ['supervisor_id', 'co_supervisor_id', 'download_count', 'is_approved', 'review_status', 'review_feedback', 'supervisor_name', 'co_supervisor_name', 'review_invitations', 'review_invitation_status', 'my_review_decision', 'owner_username', 'is_owner', 'is_reviewer', 'is_invited_reviewer', 'upload_date']
 
+    def validate_abstract(self, value):
+        if not value or not str(value).strip():
+            raise serializers.ValidationError('The abstract description is required.')
+        words = str(value).strip().split()
+        word_count = len(words)
+        if word_count < 150 or word_count > 250:
+            raise serializers.ValidationError(
+                f'The abstract must be between 150 and 250 words (currently {word_count} words).'
+            )
+        return str(value).strip()
+
     def validate(self, attrs):
         uploaded_file = attrs.get('file_attachment')
         if not self.instance and not uploaded_file:

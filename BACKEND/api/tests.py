@@ -1,5 +1,6 @@
 from django.test import TestCase
 from django.urls import reverse
+from django.core.exceptions import ValidationError
 from rest_framework import status
 from rest_framework.test import APITestCase
 from django.core.files.uploadedfile import SimpleUploadedFile
@@ -211,6 +212,8 @@ class SubjectMappingManagementTests(APITestCase):
     DEFAULT_FROM_EMAIL='unipub@example.com',
 )
 class PublicationTests(APITestCase):
+    valid_abstract = ' '.join(['Academic research abstract content exploring modern institutional repositories and data structures.'] * 16)
+
     def manuscript_upload(self, filename='manuscript.pdf', content=b'%PDF-1.4 test'):
         return SimpleUploadedFile(filename, content, content_type='application/pdf')
 
@@ -313,7 +316,7 @@ class PublicationTests(APITestCase):
             reverse('publication-list'),
             {
                 'title': 'Automatically assigned paper',
-                'abstract': 'Abstract',
+                'abstract': self.valid_abstract,
                 'pub_type': 'JOURNAL',
                 'subject_area': 'Artificial Intelligence',
                 'file_attachment': self.manuscript_upload(),
@@ -340,7 +343,7 @@ class PublicationTests(APITestCase):
             reverse('publication-list'),
             {
                 'title': 'Automatically matched paper',
-                'abstract': 'Abstract',
+                'abstract': self.valid_abstract,
                 'pub_type': 'JOURNAL',
                 'subject_area': 'Software Engineering',
                 'file_attachment': self.manuscript_upload(),
@@ -367,7 +370,7 @@ class PublicationTests(APITestCase):
         self.client.force_authenticate(user=owner)
         payload = {
             'title': 'Manuscript required',
-            'abstract': 'Abstract',
+            'abstract': self.valid_abstract,
             'pub_type': 'JOURNAL',
             'subject_area': 'Computer Science',
         }
@@ -402,7 +405,7 @@ class PublicationTests(APITestCase):
             reverse('publication-list'),
             {
                 'title': 'Unanswered review assignment',
-                'abstract': 'Abstract',
+                'abstract': self.valid_abstract,
                 'pub_type': 'JOURNAL',
                 'subject_area': 'Data Science',
                 'file_attachment': self.manuscript_upload(),            },
@@ -433,7 +436,7 @@ class PublicationTests(APITestCase):
             reverse('publication-list'),
             {
                 'title': 'Declined review assignment',
-                'abstract': 'Abstract',
+                'abstract': self.valid_abstract,
                 'pub_type': 'JOURNAL',
                 'subject_area': 'Data Science',
                 'file_attachment': self.manuscript_upload(),
@@ -476,7 +479,7 @@ class PublicationTests(APITestCase):
             reverse('publication-list'),
             {
                 'title': 'Accepted review assignment',
-                'abstract': 'Abstract',
+                'abstract': self.valid_abstract,
                 'pub_type': 'JOURNAL',
                 'subject_area': 'Data Science',
                 'file_attachment': self.manuscript_upload(),            },
@@ -677,7 +680,7 @@ class PublicationTests(APITestCase):
         self.client.force_authenticate(user=owner)
         create_response = self.client.post(
             reverse('publication-list'),
-            {'title': 'Owned paper', 'abstract': 'Abstract', 'pub_type': 'JOURNAL', 'subject_area': 'Computer Science', 'supervisor': supervisor.user_id, 'file_attachment': 			self.manuscript_upload()},
+            {'title': 'Owned paper', 'abstract': self.valid_abstract, 'pub_type': 'JOURNAL', 'subject_area': 'Computer Science', 'supervisor': supervisor.user_id, 'file_attachment': 			self.manuscript_upload()},
             format='multipart',
         )
         publication_id = create_response.data['id']
@@ -877,7 +880,7 @@ class PublicationTests(APITestCase):
             reverse('publication-list'),
             {
                 'title': 'Approval paper',
-                'abstract': 'Abstract',
+                'abstract': self.valid_abstract,
                 'pub_type': 'JOURNAL',
                 'subject_area': 'Computer Science',
                 'file_attachment': self.manuscript_upload(),            },
@@ -935,7 +938,7 @@ class PublicationTests(APITestCase):
             reverse('publication-list'),
             {
                 'title': 'Revision test paper',
-                'abstract': 'Initial abstract',
+                'abstract': self.valid_abstract,
                 'pub_type': 'JOURNAL',
                 'subject_area': 'Computer Science',
                 'supervisor': reviewer.id,
@@ -964,7 +967,7 @@ class PublicationTests(APITestCase):
         self.client.force_authenticate(user=owner)
         updated = self.client.patch(
             reverse('publication-detail', args=[publication_id]),
-            {'abstract': 'Revised abstract'},
+            {'abstract': ' '.join(['Revised academic abstract word'] * 40)},
             format='json',
         )
         self.assertEqual(updated.status_code, status.HTTP_200_OK, updated.data)
@@ -983,7 +986,7 @@ class PublicationTests(APITestCase):
             reverse('publication-list'),
             {
                 'title': 'Optional co-supervisor test',
-                'abstract': 'Abstract',
+                'abstract': self.valid_abstract,
                 'pub_type': 'JOURNAL',
                 'subject_area': 'Computer Science',
                 'supervisor': supervisor.id,
@@ -998,7 +1001,7 @@ class PublicationTests(APITestCase):
             reverse('publication-detail', args=[created.data['id']]),
             {
                 'title': 'Optional co-supervisor test',
-                'abstract': 'Updated abstract',
+                'abstract': ' '.join(['Updated academic abstract word'] * 40),
                 'pub_type': 'JOURNAL',
                 'subject_area': 'Computer Science',
                 'supervisor': str(supervisor.id),
@@ -1038,7 +1041,7 @@ class PublicationTests(APITestCase):
         self.client.force_authenticate(user=owner)
         create_response = self.client.post(
             reverse('publication-list'),
-            {'title': 'Delete request paper', 'abstract': 'Abstract', 'pub_type': 'JOURNAL', 'subject_area': 'Computer Science', 'supervisor': supervisor.user_id, 'file_attachment': 		self.manuscript_upload()},
+            {'title': 'Delete request paper', 'abstract': self.valid_abstract, 'pub_type': 'JOURNAL', 'subject_area': 'Computer Science', 'supervisor': supervisor.user_id, 'file_attachment': 		self.manuscript_upload()},
             format='multipart',
         )
         publication_id = create_response.data['id']
@@ -1089,7 +1092,7 @@ class PublicationTests(APITestCase):
             reverse('publication-list'),
             {
                 'title': 'Collaborative paper',
-                'abstract': 'A paper with a selected author.',
+                'abstract': self.valid_abstract,
                 'pub_type': 'JOURNAL',
                 'subject_area': 'Computer Science',
                 'authors': [author.id],
@@ -1118,7 +1121,7 @@ class PublicationTests(APITestCase):
             reverse('publication-list'),
             {
                 'title': 'JWT upload test',
-                'abstract': 'Testing token authentication for uploads.',
+                'abstract': self.valid_abstract,
                 'pub_type': 'JOURNAL',
                 'subject_area': 'Computer Science',
                 'supervisor': reviewer.id,
@@ -1138,7 +1141,7 @@ class PublicationTests(APITestCase):
             reverse('publication-list'),
             {
                 'title': 'Upload test',
-                'abstract': 'Testing the upload endpoint.',
+                'abstract': self.valid_abstract,
                 'pub_type': 'JOURNAL',
                 'subject_area': 'Computer Science',
                 'supervisor': reviewer.id,
@@ -1159,7 +1162,7 @@ class PublicationTests(APITestCase):
         url = reverse('publication-list') # matches router endpoint
         data = {
             'title': 'An Analysis of Computing Systems at UB',
-            'abstract': 'This paper explores local server infrastructure...',
+            'abstract': self.valid_abstract,
             'pub_type': 'JOURNAL',
             'subject_area': 'Computer Science',
             'supervisor': reviewer.id,
@@ -1169,3 +1172,106 @@ class PublicationTests(APITestCase):
         response = self.client.post(url, data, format='multipart')
         self.assertEqual(response.status_code, status.HTTP_201_CREATED)
         self.assertEqual(Publication.objects.count(), 1)
+
+    def test_publication_abstract_too_short_is_rejected(self):
+        reviewer, _ = self.create_supervisor('short-abstract-reviewer')
+        user, _ = self.create_member('short-abstract-author')
+        self.client.force_authenticate(user=user)
+        short_abstract = ' '.join(['word'] * 149)
+        response = self.client.post(
+            reverse('publication-list'),
+            {
+                'title': 'Short Abstract Paper',
+                'abstract': short_abstract,
+                'pub_type': 'JOURNAL',
+                'subject_area': 'Computer Science',
+                'supervisor': reviewer.id,
+                'file_attachment': self.manuscript_upload(),
+            },
+            format='multipart',
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('abstract', response.data)
+        self.assertIn('between 150 and 250 words', str(response.data['abstract'][0]))
+
+    def test_publication_abstract_too_long_is_rejected(self):
+        reviewer, _ = self.create_supervisor('long-abstract-reviewer')
+        user, _ = self.create_member('long-abstract-author')
+        self.client.force_authenticate(user=user)
+        long_abstract = ' '.join(['word'] * 251)
+        response = self.client.post(
+            reverse('publication-list'),
+            {
+                'title': 'Long Abstract Paper',
+                'abstract': long_abstract,
+                'pub_type': 'JOURNAL',
+                'subject_area': 'Computer Science',
+                'supervisor': reviewer.id,
+                'file_attachment': self.manuscript_upload(),
+            },
+            format='multipart',
+        )
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('abstract', response.data)
+        self.assertIn('between 150 and 250 words', str(response.data['abstract'][0]))
+
+    def test_publication_abstract_lower_boundary_150_words_is_accepted(self):
+        reviewer, _ = self.create_supervisor('boundary-min-reviewer')
+        user, _ = self.create_member('boundary-min-author')
+        self.client.force_authenticate(user=user)
+        boundary_min_abstract = ' '.join(['word'] * 150)
+        response = self.client.post(
+            reverse('publication-list'),
+            {
+                'title': 'Boundary Min Abstract Paper',
+                'abstract': boundary_min_abstract,
+                'pub_type': 'JOURNAL',
+                'subject_area': 'Computer Science',
+                'supervisor': reviewer.id,
+                'file_attachment': self.manuscript_upload(),
+            },
+            format='multipart',
+        )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED, response.data)
+        self.assertEqual(Publication.objects.filter(title='Boundary Min Abstract Paper').count(), 1)
+
+    def test_publication_abstract_upper_boundary_250_words_is_accepted(self):
+        reviewer, _ = self.create_supervisor('boundary-max-reviewer')
+        user, _ = self.create_member('boundary-max-author')
+        self.client.force_authenticate(user=user)
+        boundary_max_abstract = ' '.join(['word'] * 250)
+        response = self.client.post(
+            reverse('publication-list'),
+            {
+                'title': 'Boundary Max Abstract Paper',
+                'abstract': boundary_max_abstract,
+                'pub_type': 'JOURNAL',
+                'subject_area': 'Computer Science',
+                'supervisor': reviewer.id,
+                'file_attachment': self.manuscript_upload(),
+            },
+            format='multipart',
+        )
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED, response.data)
+        self.assertEqual(Publication.objects.filter(title='Boundary Max Abstract Paper').count(), 1)
+
+    def test_publication_model_clean_enforces_abstract_word_count(self):
+        publication_short = Publication(
+            title='Model Short Test',
+            abstract='only three words',
+            pub_type='JOURNAL',
+            subject_area='Computer Science',
+        )
+        with self.assertRaises(ValidationError) as context:
+            publication_short.clean()
+        self.assertIn('between 150 and 250 words', str(context.exception))
+
+        publication_valid = Publication(
+            title='Model Valid Test',
+            abstract=' '.join(['word'] * 150),
+            pub_type='JOURNAL',
+            subject_area='Computer Science',
+        )
+        # Should not raise
+        publication_valid.clean()
+
