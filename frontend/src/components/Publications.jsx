@@ -27,6 +27,8 @@ export default function Publications({ user }) {
     // Core Form Hooks
     const [title, setTitle] = useState('');
     const [abstract, setAbstract] = useState('');
+    const abstractWordCount = countWords(abstract);
+    const isAbstractWordCountValid = abstractWordCount >= 150 && abstractWordCount <= 250;
     const [pubType, setPubType] = useState('JOURNAL');
     const [subject, setSubject] = useState('');
     const [subjectAreas, setSubjectAreas] = useState([]);
@@ -382,8 +384,18 @@ export default function Publications({ user }) {
 
     const handleSave = async (e) => {
         e.preventDefault();
-        setPublicationSaving(true);
         setActionFeedback(null);
+
+        const wordCount = countWords(abstract);
+        if (wordCount < 150 || wordCount > 250) {
+            setActionFeedback({
+                type: 'error',
+                message: `The abstract must be between 150 and 250 words (currently ${wordCount} word${wordCount === 1 ? '' : 's'}).`,
+            });
+            return;
+        }
+
+        setPublicationSaving(true);
         const formData = new FormData();
         formData.append('title', title);
         formData.append('abstract', abstract);
@@ -651,7 +663,11 @@ export default function Publications({ user }) {
                                     : `Showing ${publications.length} result${publications.length === 1 ? '' : 's'}${search.trim() ? ` for “${search.trim()}”` : ''}.`}
                     </p>
     
-
+            {actionFeedback && (
+                        <p role={actionFeedback.type === 'error' ? 'alert' : 'status'} style={feedbackStyle(actionFeedback.type)}>
+                            {actionFeedback.message}
+                        </p>
+                    )}
                     {/* Timeline Loop */}
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
                         {!publicationsLoading && !publicationsError && publications.length === 0 && (
@@ -749,7 +765,7 @@ export default function Publications({ user }) {
             {canWrite && showSubmissionForm && (
                 <div role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setShowSubmissionForm(false); }} style={submissionBackdropStyle}>
                     <section role="dialog" aria-modal="true" aria-labelledby="submission-title" style={submissionPanelStyle}>
-                        <div>
+         
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px' }}>
                            
                             <div>
@@ -760,12 +776,7 @@ export default function Publications({ user }) {
                              
                             <button type="button" title="Close form" aria-label="Close publication form" onClick={() => setShowSubmissionForm(false)} style={iconButtonStyle}><X size={18} /></button>
                         </div>
-                        {actionFeedback && (
-                        <p role={actionFeedback.type === 'error' ? 'alert' : 'status'} style={feedbackStyle(actionFeedback.type)}>
-                            {actionFeedback.message}
-                        </p>
-                    )}
-                    </div>
+             
                         <form onSubmit={handleSave} style={{ display: 'flex', minHeight: 0, flexDirection: 'column', gap: '16px', overflowY: 'auto', overscrollBehavior: 'contain', padding: '2px' }}>
                         
                         <div style={{ display: 'flex', alignItems: 'end', gap: '8px' }}>
@@ -861,8 +872,58 @@ export default function Publications({ user }) {
                         </div>
 
                         <div>
-                            <label htmlFor="publication-abstract" style={labelStyle}>Abstract Description (required)</label>
-                            <textarea id="publication-abstract" value={abstract} onChange={e => setAbstract(e.target.value)} required style={{ ...formInputStyle, height: '100px', resize: 'vertical' }}></textarea>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: '6px' }}>
+                                <label htmlFor="publication-abstract" style={{ ...labelStyle, marginBottom: 0 }}>Abstract Description (required)</label>
+                                <span
+                                    style={{
+                                        fontSize: '0.8rem',
+                                        fontWeight: 600,
+                                        color: abstractWordCount === 0
+                                            ? '#64748b'
+                                            : isAbstractWordCountValid
+                                                ? '#15803d'
+                                                : '#b91c1c',
+                                    }}
+                                    aria-live="polite"
+                                >
+                                    {abstractWordCount} / 150–250 words
+                                </span>
+                            </div>
+                            <textarea
+                                id="publication-abstract"
+                                value={abstract}
+                                onChange={e => setAbstract(e.target.value)}
+                                required
+                                aria-describedby="abstract-helper-text"
+                                placeholder="Enter publication abstract (must be between 150 and 250 words)..."
+                                style={{
+                                    ...formInputStyle,
+                                    height: '110px',
+                                    resize: 'vertical',
+                                    borderColor: abstract.trim().length === 0
+                                        ? '#cbd5e1'
+                                        : isAbstractWordCountValid
+                                            ? '#86efac'
+                                            : '#fca5a5',
+                                }}
+                            ></textarea>
+                            <div id="abstract-helper-text" style={{ marginTop: '4px', fontSize: '0.8rem' }}>
+                                {abstractWordCount === 0 ? (
+                                    <span style={{ color: '#64748b' }}>The abstract must be between 150 and 250 words.</span>
+                                ) : abstractWordCount < 150 ? (
+                                    <span style={{ color: '#b45309' }}>
+                                        {150 - abstractWordCount} more word{150 - abstractWordCount === 1 ? '' : 's'} needed (minimum 150 words).
+                                    </span>
+                                ) : abstractWordCount <= 250 ? (
+                                    <span style={{ color: '#15803d', fontWeight: 500 }}>
+                                        ✓ Word count is valid ({abstractWordCount} words).
+                                    </span>
+                                ) : (
+                                    <span style={{ color: '#b91c1c', fontWeight: 500 }}>
+                                        Exceeds maximum limit by {abstractWordCount - 250} word{abstractWordCount - 250 === 1 ? '' : 's'} (maximum 250 words).
+                                    </span>
+                                )}
+                            </div>
                         </div>
                         <div>
                             <label htmlFor="publication-type" style={labelStyle}>Publication Type (required)</label>
@@ -879,7 +940,26 @@ export default function Publications({ user }) {
                             )}
                         </div>
                         <div style={{ display: 'flex', gap: '12px' }}>
-                            <button type="submit" disabled={publicationSaving || (!editingId && (!subject.trim() || supervisorLoading || Boolean(supervisorError) || supervisors.length === 0))} style={{ padding: '10px 16px', backgroundColor: '#0284c7', color: '#fff', border: 'none', borderRadius: '6px', cursor: publicationSaving ? 'wait' : 'pointer', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: '7px' }}>{publicationSaving && <LoaderCircle size={16} className="publication-spinner" aria-hidden="true" />}{publicationSaving ? 'Saving…' : editingId ? 'Update Publication' : 'Submit Publication'}</button>
+                            <button
+                                type="submit"
+                                disabled={publicationSaving || !isAbstractWordCountValid || (!editingId && (!subject.trim() || supervisorLoading || Boolean(supervisorError) || supervisors.length === 0))}
+                                title={!isAbstractWordCountValid ? `Abstract must be between 150 and 250 words (currently ${abstractWordCount} words)` : ''}
+                                style={{
+                                    padding: '10px 16px',
+                                    backgroundColor: (!isAbstractWordCountValid && !publicationSaving) ? '#94a3b8' : '#0284c7',
+                                    color: '#fff',
+                                    border: 'none',
+                                    borderRadius: '6px',
+                                    cursor: publicationSaving ? 'wait' : !isAbstractWordCountValid ? 'not-allowed' : 'pointer',
+                                    fontWeight: 600,
+                                    display: 'inline-flex',
+                                    alignItems: 'center',
+                                    gap: '7px',
+                                }}
+                            >
+                                {publicationSaving && <LoaderCircle size={16} className="publication-spinner" aria-hidden="true" />}
+                                {publicationSaving ? 'Saving…' : editingId ? 'Update Publication' : 'Submit Publication'}
+                            </button>
                             {editingId && <button type="button" onClick={() => { clearForm(); setShowSubmissionForm(false); }} style={{ padding: '10px 16px', backgroundColor: '#e2e8f0', color: '#475569', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: 600 }}>Cancel Edit</button>}
                         </div>
                         </form>
@@ -990,6 +1070,10 @@ export default function Publications({ user }) {
          if (message) return message;
      }
      return error?.message || fallback;
+ };
+ const countWords = (text) => {
+     if (!text || !text.trim()) return 0;
+     return text.trim().split(/\s+/).filter(Boolean).length;
  };
  const formInputStyle = { width: '100%', padding: '10px 12px', borderRadius: '6px', border: '1px solid #cbd5e1', backgroundColor: '#f8fafc', fontSize: '0.9rem', color: '#1e293b', boxSizing: 'border-box' };
  const filterInputStyle = { width: '100%', marginTop: '5px', padding: '9px 10px', borderRadius: '5px', border: '1px solid #cbd5e1', backgroundColor: '#fff', fontSize: '.86rem', color: '#1e293b', boxSizing: 'border-box' };
