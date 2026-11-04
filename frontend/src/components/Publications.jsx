@@ -1087,20 +1087,7 @@ export default function Publications({ user }) {
      if (!text || !text.trim()) return 0;
      return text.trim().split(/\s+/).filter(Boolean).length;
  };
- const formatRelativeDate = (isoString) => {
-     if (!isoString) return '';
-     const date = new Date(isoString);
-     const now = new Date();
-     const diffMs = now - date;
-     const diffMins = Math.floor(diffMs / 60000);
-     const diffHours = Math.floor(diffMs / 3600000);
-     const diffDays = Math.floor(diffMs / 86400000);
-     if (diffMins < 1) return 'just now';
-     if (diffMins < 60) return `${diffMins} minute${diffMins === 1 ? '' : 's'} ago`;
-     if (diffHours < 24) return `${diffHours} hour${diffHours === 1 ? '' : 's'} ago`;
-     if (diffDays < 7) return `${diffDays} day${diffDays === 1 ? '' : 's'} ago`;
-     return date.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
- };
+
  const formInputStyle = { width: '100%', padding: '10px 12px', borderRadius: '6px', border: '1px solid #cbd5e1', backgroundColor: '#f8fafc', fontSize: '0.9rem', color: '#1e293b', boxSizing: 'border-box' };
  const filterInputStyle = { width: '100%', marginTop: '5px', padding: '9px 10px', borderRadius: '5px', border: '1px solid #cbd5e1', backgroundColor: '#fff', fontSize: '.86rem', color: '#1e293b', boxSizing: 'border-box' };
  const filterInputLabelStyle = { display: 'block', color: '#475569', fontSize: '.8rem', fontWeight: 600 };

@@ -104,11 +104,11 @@ class RepositoryTokenObtainPairView(TokenObtainPairView):
         return super().post(request, *args, **kwargs)
 
 class PublicationViewSet(viewsets.ModelViewSet):
-    queryset = Publication.objects.all().order_by('-updated_at')
+    queryset = Publication.objects.all().order_by('upload_date')
     serializer_class = PublicationSerializer
 
     def get_queryset(self):
-        queryset = Publication.objects.all().order_by('-updated_at')
+        queryset = Publication.objects.all().order_by('upload_date')
         queryset = queryset.prefetch_related('review_invitations__reviewer', 'authors')
         user = self.request.user
         highlight_mode = (
