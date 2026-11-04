@@ -112,8 +112,8 @@ class PublicationSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Publication
-        fields = ['id', 'title', 'abstract', 'pub_type', 'subject_area', 'authors', 'authors_details', 'supervisor', 'co_supervisor', 'supervisor_id', 'co_supervisor_id', 'supervisor_name', 'co_supervisor_name', 'review_invitations', 'review_invitation_status', 'my_review_decision', 'file_attachment', 'download_count', 'upload_date', 'is_approved', 'review_status', 'review_feedback', 'owner_username', 'is_owner', 'is_reviewer', 'is_invited_reviewer']
-        read_only_fields = ['supervisor_id', 'co_supervisor_id', 'download_count', 'is_approved', 'review_status', 'review_feedback', 'supervisor_name', 'co_supervisor_name', 'review_invitations', 'review_invitation_status', 'my_review_decision', 'owner_username', 'is_owner', 'is_reviewer', 'is_invited_reviewer', 'upload_date']
+        fields = ['id', 'title', 'abstract', 'pub_type', 'subject_area', 'authors', 'authors_details', 'supervisor', 'co_supervisor', 'supervisor_id', 'co_supervisor_id', 'supervisor_name', 'co_supervisor_name', 'review_invitations', 'review_invitation_status', 'my_review_decision', 'file_attachment', 'download_count', 'upload_date', 'updated_at', 'is_approved', 'review_status', 'review_feedback', 'owner_username', 'is_owner', 'is_reviewer', 'is_invited_reviewer']
+        read_only_fields = ['supervisor_id', 'co_supervisor_id', 'download_count', 'is_approved', 'review_status', 'review_feedback', 'supervisor_name', 'co_supervisor_name', 'review_invitations', 'review_invitation_status', 'my_review_decision', 'owner_username', 'is_owner', 'is_reviewer', 'is_invited_reviewer', 'upload_date', 'updated_at']
 
     def validate_abstract(self, value):
         if not value or not str(value).strip():

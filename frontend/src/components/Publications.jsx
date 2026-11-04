@@ -728,15 +728,26 @@ export default function Publications({ user }) {
                                             </button>
                                         )}
                                     </div>
-
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+                                        {pub.updated_at && (
+                                            <time
+                                                dateTime={pub.updated_at}
+                                                title={`Last updated: ${new Date(pub.updated_at).toLocaleString()}`}
+                                                style={{ fontSize: '0.78rem', color: '#94a3b8' }}
+                                            >
+                                                Updated {formatRelativeDate(pub.updated_at)}
+                                            </time>
+                                        )}
                                     {pub.is_owner && (
-                                        <div style={{ display: 'flex', gap: '8px' }}>
-                                            {!pub.is_approved && pub.review_status !== 'APPROVED' && (
-                                                <>
-                                                    <button title="Edit publication" aria-label="Edit publication" onClick={() => startEditing(pub)} style={iconButtonStyle}><Pencil size={17} aria-hidden="true" /></button>
-                                                    <button type="button" title="Request publication deletion" aria-label="Request publication deletion" disabled={pendingAction === `delete-${pub.id}`} onClick={() => handleDeletionRequest(pub)} style={{ ...iconButtonStyle, color: '#b91c1c', cursor: pendingAction === `delete-${pub.id}` ? 'wait' : 'pointer' }}>{pendingAction === `delete-${pub.id}` ? <LoaderCircle size={17} className="publication-spinner" aria-hidden="true" /> : <Trash2 size={17} aria-hidden="true" />}</button>
-                                                </>
-                                            )}
+                                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '8px' }}>
+                                            <div style={{ display: 'flex', gap: '8px' }}>
+                                                {!pub.is_approved && pub.review_status !== 'APPROVED' && (
+                                                    <>
+                                                        <button title="Edit publication" aria-label="Edit publication" onClick={() => startEditing(pub)} style={iconButtonStyle}><Pencil size={17} aria-hidden="true" /></button>
+                                                        <button type="button" title="Request publication deletion" aria-label="Request publication deletion" disabled={pendingAction === `delete-${pub.id}`} onClick={() => handleDeletionRequest(pub)} style={{ ...iconButtonStyle, color: '#b91c1c', cursor: pendingAction === `delete-${pub.id}` ? 'wait' : 'pointer' }}>{pendingAction === `delete-${pub.id}` ? <LoaderCircle size={17} className="publication-spinner" aria-hidden="true" /> : <Trash2 size={17} aria-hidden="true" />}</button>
+                                                    </>
+                                                )}
+                                            </div>
                                         {pub.review_invitations?.length > 0 && (
                                             <div style={{ marginTop: '10px', color: '#475569', fontSize: '0.82rem' }}>
                                                 <strong>Reviewers:</strong>
@@ -750,6 +761,7 @@ export default function Publications({ user }) {
                                         )}
                                         </div>
                                     )}
+                                    </div>
                                 </div>
                                 {pub.is_owner && pub.review_feedback && (
                                     <div role="note" style={{ marginTop: '12px', padding: '11px 13px', borderLeft: '3px solid #c2410c', background: '#fff7ed', color: '#7c2d12', fontSize: '0.84rem', lineHeight: 1.5 }}>
@@ -1074,6 +1086,20 @@ export default function Publications({ user }) {
  const countWords = (text) => {
      if (!text || !text.trim()) return 0;
      return text.trim().split(/\s+/).filter(Boolean).length;
+ };
+ const formatRelativeDate = (isoString) => {
+     if (!isoString) return '';
+     const date = new Date(isoString);
+     const now = new Date();
+     const diffMs = now - date;
+     const diffMins = Math.floor(diffMs / 60000);
+     const diffHours = Math.floor(diffMs / 3600000);
+     const diffDays = Math.floor(diffMs / 86400000);
+     if (diffMins < 1) return 'just now';
+     if (diffMins < 60) return `${diffMins} minute${diffMins === 1 ? '' : 's'} ago`;
+     if (diffHours < 24) return `${diffHours} hour${diffHours === 1 ? '' : 's'} ago`;
+     if (diffDays < 7) return `${diffDays} day${diffDays === 1 ? '' : 's'} ago`;
+     return date.toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' });
  };
  const formInputStyle = { width: '100%', padding: '10px 12px', borderRadius: '6px', border: '1px solid #cbd5e1', backgroundColor: '#f8fafc', fontSize: '0.9rem', color: '#1e293b', boxSizing: 'border-box' };
  const filterInputStyle = { width: '100%', marginTop: '5px', padding: '9px 10px', borderRadius: '5px', border: '1px solid #cbd5e1', backgroundColor: '#fff', fontSize: '.86rem', color: '#1e293b', boxSizing: 'border-box' };
