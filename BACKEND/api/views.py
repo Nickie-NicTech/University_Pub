@@ -343,6 +343,12 @@ class PublicationViewSet(viewsets.ModelViewSet):
             return Response({'feedback': ['Provide feedback of at least five characters.']}, status=status.HTTP_400_BAD_REQUEST)
         if not isinstance(feedback, str):
             return Response({'feedback': ['Feedback must be text.']}, status=status.HTTP_400_BAD_REQUEST)
+        feedback_word_count = len(feedback.strip().split())
+        if feedback_word_count > 1000:
+            return Response(
+                {'feedback': [f'Feedback must not exceed 1000 words (currently {feedback_word_count} words).']},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         invitation.decision = decision
         invitation.feedback = feedback.strip()
         invitation.save(update_fields=['decision', 'feedback'])

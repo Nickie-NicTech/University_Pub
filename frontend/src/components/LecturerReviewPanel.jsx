@@ -377,8 +377,29 @@ export default function LecturerReviewPanel({ user }) {
                                                     required
                                                     rows={4}
                                                     onChange={(event) => setRevisionFeedback(event.target.value)}
-                                                    style={textareaStyle}
+                                                    style={{
+                                                        ...textareaStyle,
+                                                        borderColor: revisionFeedback.trim().split(/\s+/).filter(Boolean).length > 1000
+                                                            ? '#dc2626' : textareaStyle.borderColor,
+                                                    }}
                                                 />
+                                                {(() => {
+                                                    const wordCount = revisionFeedback.trim() ? revisionFeedback.trim().split(/\s+/).filter(Boolean).length : 0;
+                                                    const exceeded = wordCount > 1000;
+                                                    return (
+                                                        <div style={{
+                                                            display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                                                            fontSize: '.78rem', color: exceeded ? '#dc2626' : '#64748b',
+                                                        }}>
+                                                            <span>
+                                                                {exceeded
+                                                                    ? `Exceeds limit by ${wordCount - 1000} word${wordCount - 1000 === 1 ? '' : 's'}`
+                                                                    : `${1000 - wordCount} word${1000 - wordCount === 1 ? '' : 's'} remaining`}
+                                                            </span>
+                                                            <span style={{ fontWeight: 600 }}>{wordCount} / 1000 words</span>
+                                                        </div>
+                                                    );
+                                                })()}
                                                 <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
                                                     <button
                                                         type="button"
@@ -389,7 +410,11 @@ export default function LecturerReviewPanel({ user }) {
                                                     </button>
                                                     <button
                                                         type="submit"
-                                                        disabled={revisionFeedback.trim().length < 5 || Boolean(pendingAction)}
+                                                        disabled={
+                                                            revisionFeedback.trim().length < 5
+                                                            || (revisionFeedback.trim().split(/\s+/).filter(Boolean).length > 1000)
+                                                            || Boolean(pendingAction)
+                                                        }
                                                         style={actionButtonStyle('#b45309')}
                                                     >
                                                         {pendingAction === `REVISION_REQUESTED-${publication.id}` && (
