@@ -679,7 +679,7 @@ export default function Publications({ user }) {
                                         : 'No publications are available yet.'}
                             </p>
                         )}
-                        {publications.map(pub => (
+                        {publications && publications.map(pub => (
                             <article id={`publication-${pub.id}`} key={pub.id} style={{
                                 backgroundColor: '#fff', padding: '20px', borderRadius: '8px',
                                 border: '1px solid #e2e8f0', boxShadow: '0 1px 3px rgba(0,0,0,0.04)'
@@ -735,7 +735,7 @@ export default function Publications({ user }) {
                                                 title={`Last updated: ${new Date(pub.updated_at).toLocaleString()}`}
                                                 style={{ fontSize: '0.78rem', color: '#94a3b8' }}
                                             >
-                                                Updated {formatRelativeDate(pub.updated_at)}
+                                                Updated {pub.updated_at && formatRelativeDate(pub.updated_at)}
                                             </time>
                                         )}
                                     {pub.is_owner && (
@@ -1086,6 +1086,22 @@ export default function Publications({ user }) {
  const countWords = (text) => {
      if (!text || !text.trim()) return 0;
      return text.trim().split(/\s+/).filter(Boolean).length;
+ };
+
+ const formatRelativeDate = (dateString) => {
+     const now = new Date();
+     const date = new Date(dateString);
+     const seconds = Math.floor((now - date) / 1000);
+     if (seconds < 60) return 'just now';
+     const minutes = Math.floor(seconds / 60);
+     if (minutes < 60) return `${minutes}m ago`;
+     const hours = Math.floor(minutes / 60);
+     if (hours < 24) return `${hours}h ago`;
+     const days = Math.floor(hours / 24);
+     if (days < 30) return `${days}d ago`;
+     const months = Math.floor(days / 30);
+     if (months < 12) return `${months}mo ago`;
+     return `${Math.floor(months / 12)}y ago`;
  };
 
  const formInputStyle = { width: '100%', padding: '10px 12px', borderRadius: '6px', border: '1px solid #cbd5e1', backgroundColor: '#f8fafc', fontSize: '0.9rem', color: '#1e293b', boxSizing: 'border-box' };

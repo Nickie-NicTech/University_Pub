@@ -103,6 +103,16 @@ class RepositoryTokenObtainPairView(TokenObtainPairView):
 
         return super().post(request, *args, **kwargs)
 
+def author_name_q(text, prefix='authors__'):
+    """Every word must match the first or last name of the same author."""
+    q = Q()
+    for token in text.split():
+        q &= (
+            Q(**{f'{prefix}first_name__icontains': token})
+            | Q(**{f'{prefix}last_name__icontains': token})
+        )
+    return q
+
 class PublicationViewSet(viewsets.ModelViewSet):
     queryset = Publication.objects.all().order_by('upload_date')
     serializer_class = PublicationSerializer
@@ -137,11 +147,9 @@ class PublicationViewSet(viewsets.ModelViewSet):
                 'title': Q(title__icontains=search_query),
                 'abstract': Q(abstract__icontains=search_query),
                 'subject_area': Q(subject_area__icontains=search_query),
-                'author': (
-                    Q(authors__first_name__icontains=search_query)
-                    | Q(authors__last_name__icontains=search_query)
-                ),
+                'author':author_name_q(search_query),
             }
+        
             requested_fields = self.request.query_params.getlist('search_in')
             search_fields = set(requested_fields) if requested_fields else set(supported_fields)
             search_filter = Q()
@@ -155,10 +163,7 @@ class PublicationViewSet(viewsets.ModelViewSet):
 
         author_query = self.request.query_params.get('author', '').strip()
         if author_query:
-            queryset = queryset.filter(
-                Q(authors__first_name__icontains=author_query)
-                | Q(authors__last_name__icontains=author_query)
-            ).distinct()
+            queryset = queryset.filter(author_name_q(author_query)).distinct()
 
         subject_area = self.request.query_params.get('subject_area', '').strip()
         if subject_area:
@@ -393,6 +398,7 @@ class PublicationViewSet(viewsets.ModelViewSet):
             reason=request.data.get('reason', ''),
         )
         return Response(PublicationDeletionRequestSerializer(deletion_request).data, status=status.HTTP_201_CREATED)
+    
 
 class AuthorViewSet(viewsets.ModelViewSet):
     queryset = AuthorProfile.objects.all()
