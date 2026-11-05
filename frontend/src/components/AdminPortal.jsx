@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Activity, Bell, BookOpenCheck, Check, Database, LayoutDashboard, LogOut, Pencil, Plus, Search, Trash2, Users, X } from 'lucide-react';
+import { Activity, Bell, BookOpenCheck, Check, Database, Download, LayoutDashboard, LogOut, Pencil, Plus, Search, Trash2, Users, X } from 'lucide-react';
 import API from '../api';
 import './AdminPortal.css';
 
@@ -78,16 +78,85 @@ export default function AdminPortal({ onLogout }) {
     );
 }
 
+// function Overview({ analytics, onManageUsers }) {
+//     const metrics = [
+//         ['Registered users', analytics?.users ?? '—', Users, 'Accounts on the platform'],
+//         ['Active supervisors', analytics?.supervisors ?? '—', Users, 'Lecturers assigned to supervise users'],
+//         ['Publications', analytics?.publications ?? '—', BookOpenCheck, `${analytics?.approved_publications ?? 0} approved`],
+//         ['Downloads', analytics?.downloads ?? '—', Activity, 'Across all publications'],
+//     ];
+//     return <>
+//         <div className="admin-section-intro"><div><h2>Platform pulse</h2><p>Current repository activity and access overview.</p></div><span className="admin-updated">LIVE DATA</span></div>
+//         <div className="admin-metrics">{metrics.map(([label, value, Icon, note]) => <article className="admin-metric" key={label}><div className="admin-metric-top"><span>{label}</span><Icon size={18} /></div><strong>{value}</strong><small>{note}</small></article>)}</div>
+//         <section className="admin-panel admin-request-summary"><div><span className="admin-panel-kicker">PUBLICATION REVIEW</span><h2>Lecturers review publications</h2><p>Researchers invite a supervisor and optional co-supervisor when submitting each publication.</p></div><button className="admin-secondary" onClick={onManageUsers}>Manage users <span aria-hidden="true">→</span></button></section>
+//     </>;
+// }
+
+//
+
 function Overview({ analytics, onManageUsers }) {
+    const [downloading, setDownloading] = useState(false);
+    const [downloadError, setDownloadError] = useState('');
+
+    const extractReport = async () => {
+        setDownloading(true);
+        setDownloadError('');
+        try {
+            const response = await API.get('admin/analytics/pdf/', { responseType: 'blob' });
+            const url = window.URL.createObjectURL(new Blob([response.data], { type: 'application/pdf' }));
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = `unipub-summary-${new Date().toISOString().slice(0, 10)}.pdf`;
+            document.body.appendChild(link);
+            link.click();
+            link.remove();
+            window.URL.revokeObjectURL(url);
+        } catch {
+            setDownloadError('Unable to extract the report. Please try again.');
+        } finally {
+            setDownloading(false);
+        }
+    };
+
     const metrics = [
         ['Registered users', analytics?.users ?? '—', Users, 'Accounts on the platform'],
         ['Active supervisors', analytics?.supervisors ?? '—', Users, 'Lecturers assigned to supervise users'],
-        ['Publications', analytics?.publications ?? '—', BookOpenCheck, `${analytics?.approved_publications ?? 0} approved`],
+        ['Publications', analytics?.publications ?? '—', BookOpenCheck, `${analytics?.approved_publications ?? 0} approved · ${analytics?.not_approved_publications ?? 0} not yet approved`],
         ['Downloads', analytics?.downloads ?? '—', Activity, 'Across all publications'],
     ];
+    const usersByRole = analytics?.users_by_role ?? [];
+    const publicationsByType = analytics?.publications_by_type ?? [];
+
     return <>
-        <div className="admin-section-intro"><div><h2>Platform pulse</h2><p>Current repository activity and access overview.</p></div><span className="admin-updated">LIVE DATA</span></div>
+        <div className="admin-section-intro">
+            <div><h2>Platform pulse</h2><p>Current repository activity and access overview.</p></div>
+            <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
+                <span className="admin-updated">LIVE DATA</span>
+                <button className="admin-primary compact" onClick={extractReport} disabled={downloading || !analytics}>
+                    <Download size={16} /> {downloading ? 'Extracting...' : 'Extract PDF report'}
+                </button>
+            </div>
+        </div>
+        {downloadError && <div className="admin-alert" role="alert">{downloadError}</div>}
         <div className="admin-metrics">{metrics.map(([label, value, Icon, note]) => <article className="admin-metric" key={label}><div className="admin-metric-top"><span>{label}</span><Icon size={18} /></div><strong>{value}</strong><small>{note}</small></article>)}</div>
+
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: 16, margin: '16px 0' }}>
+            <section className="admin-panel">
+                <span className="admin-panel-kicker">USERS</span><h2>Users by type</h2>
+                <div className="admin-table-wrap"><table className="admin-table"><thead><tr><th>User type</th><th>Accounts</th></tr></thead><tbody>
+                    {usersByRole.map((item) => <tr key={item.role}><td>{item.label}</td><td><strong>{item.count}</strong></td></tr>)}
+                    {usersByRole.length === 0 && <tr><td colSpan="2" className="admin-empty">No data yet.</td></tr>}
+                </tbody></table></div>
+            </section>
+            <section className="admin-panel">
+                <span className="admin-panel-kicker">PUBLICATIONS</span><h2>Publications by type</h2>
+                <div className="admin-table-wrap"><table className="admin-table"><thead><tr><th>Type</th><th>Total</th><th>Approved</th><th>Not yet approved</th></tr></thead><tbody>
+                    {publicationsByType.map((item) => <tr key={item.type}><td>{item.label}</td><td><strong>{item.total}</strong></td><td>{item.approved}</td><td>{item.not_approved}</td></tr>)}
+                    {publicationsByType.length === 0 && <tr><td colSpan="4" className="admin-empty">No data yet.</td></tr>}
+                </tbody></table></div>
+            </section>
+        </div>
+
         <section className="admin-panel admin-request-summary"><div><span className="admin-panel-kicker">PUBLICATION REVIEW</span><h2>Lecturers review publications</h2><p>Researchers invite a supervisor and optional co-supervisor when submitting each publication.</p></div><button className="admin-secondary" onClick={onManageUsers}>Manage users <span aria-hidden="true">→</span></button></section>
     </>;
 }

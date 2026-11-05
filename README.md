@@ -21,10 +21,10 @@ Set `DJANGO_SECRET_KEY` and `UNIPUB_ADMIN_PASSWORD` as process environment varia
 
 ```powershell
 $env:DJANGO_SECRET_KEY = "<a generated random secret>"
-$env:UNIPUB_ADMIN_PASSWORD = "<your strong admin password>"
+$env:UNIPUB_ADMIN_PASSWORD = "admin"
 ```
 
-Configure `EMAIL_HOST`, `EMAIL_HOST_USER`, `EMAIL_HOST_PASSWORD`, and `DEFAULT_FROM_EMAIL` to enable supervisor and submitter email notifications. The email settings in `.env.example` are placeholders; set real values in the deployment environment and never commit credentials. Email is sent when a publication is submitted or resubmitted, revisions are requested, or a publication is approved.
+Configure `EMAIL_HOST`, `EMAIL_HOST_USER`, `EMAIL_HOST_PASSWORD`, and `DEFAULT_FROM_EMAIL` to enable supervisor and submitter email notifications.  Email is sent when a publication is submitted or resubmitted, revisions are requested, or a publication is approved.
 
 ```powershell
 python manage.py migrate

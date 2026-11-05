@@ -21,6 +21,14 @@ from rest_framework import generics, permissions
 from rest_framework_simplejwt.views import TokenObtainPairView
 from .serializers import RepositoryTokenObtainPairSerializer
 from rest_framework_simplejwt.tokens import RefreshToken
+from io import BytesIO
+from django.db.models import Q, F, Sum, Count
+from django.http import FileResponse, HttpResponse
+from reportlab.lib import colors
+from reportlab.lib.pagesizes import A4
+from reportlab.lib.styles import getSampleStyleSheet
+from reportlab.lib.units import cm
+from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
 logger = logging.getLogger(__name__)
 
@@ -582,7 +590,131 @@ class AdminSubjectMappingDetailView(generics.DestroyAPIView):
                 mapping.delete()
 
 
+# class AdminAnalyticsView(APIView):
+
+#replacement for admin analytics view
+
+def build_admin_summary():
+    publications = Publication.objects.all()
+    total = publications.count()
+    approved = publications.filter(is_approved=True).count()
+
+    role_counts = dict(
+        UserProfile.objects.filter(user__is_staff=False)
+        .order_by()
+        .values_list('role')
+        .annotate(total=Count('id'))
+    )
+    users_by_role = [
+        {'role': value, 'label': label, 'count': role_counts.get(value, 0)}
+        for value, label in UserProfile.ROLE_CHOICES
+        if value != 'ADMIN'
+    ]
+
+    type_rows = {
+        row['pub_type']: row
+        for row in publications.order_by().values('pub_type').annotate(
+            total=Count('id'),
+            approved=Count('id', filter=Q(is_approved=True)),
+        )
+    }
+    publications_by_type = []
+    for value, label in Publication.PUBLICATION_TYPES:
+        row = type_rows.get(value, {})
+        type_total = row.get('total', 0)
+        type_approved = row.get('approved', 0)
+        publications_by_type.append({
+            'type': value,
+            'label': label,
+            'total': type_total,
+            'approved': type_approved,
+            'not_approved': type_total - type_approved,
+        })
+
+    return {
+        'users': User.objects.filter(is_staff=False).count(),
+        'supervisors': UserProfile.objects.filter(role='LECTURER').count(),
+        'publications': total,
+        'approved_publications': approved,
+        'not_approved_publications': total - approved,
+        'pending_publications': publications.filter(
+            review_status__in=['PENDING_INVITATIONS', 'PENDING', 'REVISION_REQUESTED']
+        ).count(),
+        'downloads': publications.aggregate(total=Sum('download_count'))['total'] or 0,
+        'users_by_role': users_by_role,
+        'publications_by_type': publications_by_type,
+    }
+
+
 class AdminAnalyticsView(APIView):
+    permission_classes = [permissions.IsAdminUser]
+
+    def get(self, request):
+        return Response(build_admin_summary())
+
+
+class AdminAnalyticsPdfView(APIView):
+    permission_classes = [permissions.IsAdminUser]
+
+    def get(self, request):
+        summary = build_admin_summary()
+        styles = getSampleStyleSheet()
+        buffer = BytesIO()
+        document = SimpleDocTemplate(
+            buffer, pagesize=A4, title='UNIPUB System Summary',
+            leftMargin=2 * cm, rightMargin=2 * cm, topMargin=2 * cm, bottomMargin=2 * cm,
+        )
+
+        def make_table(rows):
+            table = Table(rows, hAlign='LEFT', repeatRows=1)
+            table.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1e293b')),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('FONTNAME', (0, -1), (-1, -1), 'Helvetica-Bold'),
+                ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#cbd5e1')),
+                ('ROWBACKGROUNDS', (0, 1), (-1, -2), [colors.white, colors.HexColor('#f1f5f9')]),
+                ('ALIGN', (1, 0), (-1, -1), 'RIGHT'),
+                ('TOPPADDING', (0, 0), (-1, -1), 6),
+                ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
+            ]))
+            return table
+
+        user_rows = [['User type', 'Accounts']]
+        user_rows += [[item['label'], item['count']] for item in summary['users_by_role']]
+        user_rows.append(['All registered users', summary['users']])
+
+        publication_rows = [['Publication type', 'Total', 'Approved', 'Not yet approved']]
+        publication_rows += [
+            [item['label'], item['total'], item['approved'], item['not_approved']]
+            for item in summary['publications_by_type']
+        ]
+        publication_rows.append([
+            'All publications', summary['publications'],
+            summary['approved_publications'], summary['not_approved_publications'],
+        ])
+
+        story = [
+            Paragraph('UNIPUB System Summary', styles['Title']),
+            Paragraph(f"Generated {timezone.localtime():%d %B %Y, %H:%M}", styles['Normal']),
+            Spacer(1, 18),
+            Paragraph('Users', styles['Heading2']),
+            make_table(user_rows),
+            Spacer(1, 18),
+            Paragraph('Publications', styles['Heading2']),
+            make_table(publication_rows),
+            Spacer(1, 18),
+            Paragraph('Activity', styles['Heading2']),
+            Paragraph(f"Total downloads across all publications: {summary['downloads']}", styles['Normal']),
+        ]
+        document.build(story)
+
+        response = HttpResponse(buffer.getvalue(), content_type='application/pdf')
+        response['Content-Disposition'] = (
+            f'attachment; filename="unipub-summary-{timezone.localdate():%Y-%m-%d}.pdf"'
+        )
+        return response
+    
     permission_classes = [permissions.IsAdminUser]
 
     def get(self, request):
