@@ -67,6 +67,13 @@ export default function Publications({ user }) {
     // Restrictions configuration boundary parameters
     const canWrite = user && ['STUDENT', 'LECTURER'].includes(user.role);
     const latestHighlights = highlights.slice(0, 3);
+    const hasSearchFilters = Boolean(
+    search.trim() ||
+    authorFilter.trim() ||
+    subjectFilter.trim() ||
+    publicationTypes.length > 0 ||
+    searchFields.length !== 4
+    );
     const fetchPublications = useCallback(async () => {
         const params = new URLSearchParams();
         if (search.trim()) {
@@ -156,8 +163,6 @@ export default function Publications({ user }) {
         setSubject('');
         setFile(null);
         setSelectedAuthors([]);
-        setSupervisorId('');
-        setCoSupervisorId('');
     };
 
     const startEditing = (publication) => {
@@ -168,8 +173,6 @@ export default function Publications({ user }) {
         setPubType(publication.pub_type);
         setSubject(publication.subject_area);
         setSelectedAuthors(publication.authors_details || []);
-        setSupervisorId(publication.supervisor_id ? String(publication.supervisor_id) : '');
-        setCoSupervisorId(publication.co_supervisor_id ? String(publication.co_supervisor_id) : '');
         setShowSubmissionForm(true);
     };
 
@@ -260,66 +263,6 @@ export default function Publications({ user }) {
                 setSubjectAreas([]);
             });
     }, [canWrite]);
-
-    useEffect(() => {
-        if (!canWrite) {
-            setSupervisorLoading(false);
-            return;
-        }
-
-        // Do not look for a reviewer until a subject area has been selected.
-        if (!subject.trim() && !editingId) {            setSupervisors([]);
-            setSupervisorId('');
-            setCoSupervisorId('');
-            setSupervisorError('');
-            setSupervisorLoading(false);
-            return;
-        }
-
-        let isCurrentRequest = true;
-
-        setSupervisorLoading(true);
-        setSupervisorError('');
-
-        const query = `?subject_area=${encodeURIComponent(subject.trim())}`;
-
-        API.get(`users/supervisors/${query}`)
-            .then(({ data }) => {
-                if (!isCurrentRequest) return;
-
-                const lecturers = Array.isArray(data) ? data : [];
-                setSupervisors(lecturers);
-                const matchingReviewer = lecturers.find(
-                    (lecturer) => lecturer.is_subject_match
-                );
-
-                if (matchingReviewer && !editingId) {
-                    setSupervisorId(String(matchingReviewer.user_id));
-
-                    // New publications use one reviewer only.
-                    setCoSupervisorId('');                }
-            })
-            .catch((err) => {
-                if (!isCurrentRequest) return;
-
-                console.error('Unable to load subject reviewer:', err);
-                setSupervisorError(
-                    getErrorMessage(
-                        err,
-                        'Unable to load the reviewer for this subject area.'
-                    )
-                );
-            })
-            .finally(() => {
-                if (isCurrentRequest) {
-                    setSupervisorLoading(false);
-                }
-            });
-
-        return () => {
-            isCurrentRequest = false;
-        };
-    }, [canWrite, subject, editingId]);
 
     useEffect(() => {
         if (!showAuthorModal) return;
@@ -457,8 +400,6 @@ export default function Publications({ user }) {
         formData.append('abstract', abstract);
         formData.append('pub_type', pubType);
         formData.append('subject_area', subject);
-        if (editingId && canChangeSupervisor) formData.append('supervisor', supervisorId);
-        if (editingId && canChangeCoSupervisor) formData.append('co_supervisor', coSupervisorId);
         selectedAuthors.forEach((author) => formData.append('authors', author.id));
         if (file) formData.append('file_attachment', file);
 
@@ -845,7 +786,7 @@ export default function Publications({ user }) {
                                             ● {({
                                                 PENDING_INVITATIONS: 'Waiting for reviewer responses',
                                                 PENDING: 'Pending review',
-                                                REVIEWER_DECLINED: 'Reviewers declined — choose again',
+                                                REVIEWER_DECLINED: 'Predefined reviewer declined — contact administrator',
                                                 REVISION_REQUESTED: 'Revisions requested',
                                                 APPROVED: 'Approved',
                                             })[pub.review_status] || 'Pending review'}
@@ -993,66 +934,22 @@ export default function Publications({ user }) {
                             </select>
                         </div>
                         <div>
-                            {editingId && (canChangeSupervisor || canChangeCoSupervisor) ? (
-                                <>
-                                    <p style={{ ...labelStyle, margin: '0 0 6px' }}>Reviewer assignments</p>
-                                    {canChangeSupervisor && (
-                                        <>
-                                            <label htmlFor="publication-reviewer" style={labelStyle}>Lecturer supervisor (required)</label>
-                                            <select id="publication-reviewer" value={supervisorId} onChange={(event) => setSupervisorId(event.target.value)} required style={formInputStyle}>
-                                                <option value="">Select a lecturer supervisor</option>
-                                                {supervisors.map((lecturer) => <option key={lecturer.user_id} value={lecturer.user_id}>{lecturer.name} — {lecturer.department}</option>)}
-                                            </select>
-                                            <p style={{ margin: '4px 0 10px', color: '#64748b', fontSize: '.78rem' }}>
-                                                The current supervisor {supervisorInvitation?.status === 'DECLINED' ? 'declined the invitation' : 'has not responded'}; you may reassign this role.
-                                            </p>
-                                        </>
-                                    )}
-                                    {canChangeCoSupervisor && (
-                                        <>
-                                            <label htmlFor="publication-co-supervisor" style={labelStyle}>Co-supervisor (optional)</label>
-                                            <select id="publication-co-supervisor" value={coSupervisorId} onChange={(event) => setCoSupervisorId(event.target.value)} style={formInputStyle}>
-                                                <option value="">No co-supervisor</option>
-                                                {supervisors.filter((lecturer) => String(lecturer.user_id) !== supervisorId).map((lecturer) => <option key={lecturer.user_id} value={lecturer.user_id}>{lecturer.name} — {lecturer.department}</option>)}
-                                            </select>
-                                            <p style={{ margin: '4px 0 10px', color: '#64748b', fontSize: '.78rem' }}>
-                                                The current co-supervisor {coSupervisorInvitation?.status === 'DECLINED' ? 'declined the invitation' : 'has not responded'}; you may reassign this role.
-                                            </p>
-                                        </>
-                                    )}
-                                </>
-                            ) : editingId ? (
-                                <p style={{ margin: 0, color: '#475569', fontSize: '.85rem' }}>
-                                    Reviewers have responded or accepted their invitations. Reviewer assignments are locked while review is in progress.
-                                </p>
-                            ) : !subject.trim() && !editingId ? (
-                                <p style={{ margin: 0, color: '#64748b', fontSize: '0.85rem' }}>
-                                    Select a subject area to see the assigned reviewer.
-                                </p>
-                            ) : supervisorLoading ? (
-                                <p role="status" style={{ color: '#64748b', fontSize: '0.85rem' }}>
-                                    <LoaderCircle
-                                        size={15}
-                                        className="publication-spinner"
-                                        aria-hidden="true"
-                                    />{' '}
-                                    Finding assigned reviewer…
-                                </p>                            ) : supervisorLoading ? (
-                                <p role="status" style={{ color: '#64748b', fontSize: '0.85rem' }}><LoaderCircle size={15} className="publication-spinner" aria-hidden="true" /> Finding subject-matched supervisors…</p>
-                            ) : supervisorError ? (
-                                <p role="alert" style={{ color: '#b91c1c', fontSize: '0.85rem' }}>{supervisorError}</p>
-                            ) : rankedSupervisors.length > 0 ? (
-                                <div role="status" style={{ padding: '10px 12px', border: '1px solid #bae6fd', borderRadius: 6, background: '#f0f9ff', color: '#075985', fontSize: '.85rem' }}>
-                                    <strong>{rankedSupervisors[0].is_subject_match ? 'Reviewer matched automatically using lecturer expertise' : 'Best available lecturer selected automatically'}</strong>
-                                    <div style={{ marginTop: 5 }}>
-                                        Assigned to: {rankedSupervisors[0].name} — {rankedSupervisors[0].department}
-                                        {rankedSupervisors[0].skillset ? ` · Skills: ${rankedSupervisors[0].skillset}` : ''}
-                                    </div>
-                                </div>
-                            ) : (
-                                <p role="alert" style={{ margin: 0, color: '#b91c1c', fontSize: '0.85rem' }}>
-                                    No reviewer is mapped to this subject area. Contact an administrator to configure the subject mapping before submitting.                                				</p>
-                            )}
+                            <p
+                                role="status"
+                                style={{
+                                    margin: 0,
+                                    padding: '10px 12px',
+                                    border: '1px solid #bae6fd',
+                                    borderRadius: 6,
+                                    background: '#f0f9ff',
+                                    color: '#075985',
+                                    fontSize: '.85rem',
+                                }}
+                            >
+                                {editingId
+                                    ? 'Your publication reviewer is predefined by the university and cannot be changed manually.'
+                                    : 'Your publication will automatically be assigned to the lecturer predefined in your university record when you submit it.'}
+                            </p>
                         </div>
 
                         <div>
@@ -1126,7 +1023,7 @@ export default function Publications({ user }) {
                         <div style={{ display: 'flex', gap: '12px' }}>
                             <button
                                 type="submit"
-                                disabled={publicationSaving || !isAbstractWordCountValid || (!editingId && (!subject.trim() || supervisorLoading || Boolean(supervisorError) || supervisors.length === 0))}
+                                disabled={publicationSaving || !isAbstractWordCountValid || (!editingId && !subject.trim())}
                                 title={!isAbstractWordCountValid ? `Abstract must be between 150 and 250 words (currently ${abstractWordCount} words)` : ''}
                                 style={{
                                     padding: '10px 16px',

@@ -112,19 +112,8 @@ class PublicationSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Publication
-        fields = ['id', 'title', 'abstract', 'pub_type', 'subject_area', 'authors', 'authors_details', 'supervisor', 'co_supervisor', 'supervisor_id', 'co_supervisor_id', 'supervisor_name', 'co_supervisor_name', 'review_invitations', 'review_invitation_status', 'my_review_decision', 'file_attachment', 'download_count', 'upload_date', 'updated_at', 'is_approved', 'review_status', 'review_feedback', 'owner_username', 'is_owner', 'is_reviewer', 'is_invited_reviewer']
-        read_only_fields = ['supervisor_id', 'co_supervisor_id', 'download_count', 'is_approved', 'review_status', 'review_feedback', 'supervisor_name', 'co_supervisor_name', 'review_invitations', 'review_invitation_status', 'my_review_decision', 'owner_username', 'is_owner', 'is_reviewer', 'is_invited_reviewer', 'upload_date', 'updated_at']
-
-    def validate_abstract(self, value):
-        if not value or not str(value).strip():
-            raise serializers.ValidationError('The abstract description is required.')
-        words = str(value).strip().split()
-        word_count = len(words)
-        if word_count < 150 or word_count > 250:
-            raise serializers.ValidationError(
-                f'The abstract must be between 150 and 250 words (currently {word_count} words).'
-            )
-        return str(value).strip()
+        fields = ['id', 'title', 'abstract', 'pub_type', 'subject_area', 'authors', 'authors_details', 'supervisor', 'co_supervisor', 'supervisor_id', 'co_supervisor_id', 'supervisor_name', 'co_supervisor_name', 'review_invitations', 'review_invitation_status', 'my_review_decision', 'file_attachment', 'download_count', 'upload_date', 'is_approved', 'review_status', 'review_feedback', 'owner_username', 'is_owner', 'is_reviewer', 'is_invited_reviewer']
+        read_only_fields = ['supervisor_id', 'co_supervisor_id', 'download_count', 'is_approved', 'review_status', 'review_feedback', 'supervisor_name', 'co_supervisor_name', 'review_invitations', 'review_invitation_status', 'my_review_decision', 'owner_username', 'is_owner', 'is_reviewer', 'is_invited_reviewer', 'upload_date']
 
     def validate(self, attrs):
         uploaded_file = attrs.get('file_attachment')
@@ -148,6 +137,12 @@ class PublicationSerializer(serializers.ModelSerializer):
         request = self.context.get('request')
         supervisor = attrs.get('supervisor')
         co_supervisor = attrs.get('co_supervisor')
+        if self.instance and (
+            'supervisor' in attrs or 'co_supervisor' in attrs
+        ):
+            raise serializers.ValidationError({
+                'supervisor': 'Publication reviewers are predefined and cannot be changed manually.'
+            })
         subject_area = attrs.get('subject_area', self.instance.subject_area if self.instance else '')
         if self.instance:
             current = {
@@ -164,12 +159,6 @@ class PublicationSerializer(serializers.ModelSerializer):
             )
             supervisor = attrs.get('supervisor', current.get('SUPERVISOR'))
             co_supervisor = attrs.get('co_supervisor', current.get('CO_SUPERVISOR'))
-            if subject_area != self.instance.subject_area and not any(
-                field in attrs for field in ('supervisor', 'co_supervisor')
-            ):
-                supervisor, co_supervisor = self._mapped_reviewers(subject_area, request)
-                attrs['supervisor'] = supervisor
-                attrs['co_supervisor'] = co_supervisor
 
             for role, proposed in (
                 ('SUPERVISOR', supervisor),
@@ -209,18 +198,43 @@ class PublicationSerializer(serializers.ModelSerializer):
         if co_supervisor is not None or 'co_supervisor' in attrs:
             attrs['co_supervisor'] = co_supervisor
         return attrs
-
+    
     def _mapped_reviewers(self, subject_area, request):
-        lecturers = UserProfile.objects.select_related('user').filter(
-            role='LECTURER',
-            user__is_active=True,
-        ).exclude(user=request.user)
-        ranked = rank_lecturers(subject_area, lecturers)
-        if not ranked:
+        if not request or not request.user.is_authenticated:
+            raise serializers.ValidationError(
+                'You must be logged in to submit a publication.'
+            )
+
+        directory_entry = UniversityDirectoryEntry.objects.filter(
+            claimed_by=request.user,
+            is_active=True,
+        ).select_related('assigned_reviewer__claimed_by').first()
+
+        if not directory_entry:
             raise serializers.ValidationError({
-                'subject_area': 'No eligible lecturer is available for this subject area. Ask an administrator to review lecturer profiles or mappings.'
+                'supervisor': 'Your university directory record could not be found.'
             })
-        return ranked[0].user, None
+
+        reviewer = directory_entry.assigned_reviewer
+
+        if not reviewer or not reviewer.is_active or reviewer.person_type != 'LECTURER':
+            raise serializers.ValidationError({
+                'supervisor': 'No valid predefined reviewer is assigned to your university record.'
+            })
+
+        if reviewer.pk == directory_entry.pk:
+            raise serializers.ValidationError({
+                'supervisor': 'You cannot review your own publication.'
+            })
+
+        reviewer_user = reviewer.claimed_by
+
+        if not reviewer_user or not reviewer_user.is_active:
+            raise serializers.ValidationError({
+                'supervisor': 'Your predefined reviewer has not registered in UNIPUB or is inactive. Please try again after the reviewer registers.'
+            })
+
+        return reviewer_user, None
 
     def get_is_owner(self, obj):
         request = self.context.get('request')

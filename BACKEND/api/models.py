@@ -2,7 +2,6 @@ from django.db import models
 from django.contrib.auth.models import User
 from django.core.exceptions import ValidationError
 
-
 def validate_abstract_word_count(value):
     if not value or not str(value).strip():
         raise ValidationError('The abstract description is required.')
@@ -42,6 +41,14 @@ class UniversityDirectoryEntry(models.Model):
     department = models.CharField(max_length=100)
     is_active = models.BooleanField(default=True)
     claimed_by = models.OneToOneField(User, on_delete=models.SET_NULL, blank=True, null=True, related_name='university_directory_entry')
+    assigned_reviewer = models.ForeignKey(
+        'self',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='assigned_authors',
+        limit_choices_to={'person_type': 'LECTURER'},
+    )
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
