@@ -55,8 +55,10 @@ export default function Publications({ user }) {
     const [supervisorError, setSupervisorError] = useState('');
     const [supervisorId, setSupervisorId] = useState('');
     const [coSupervisorId, setCoSupervisorId] = useState('');
-    const [yearFilter, setYearFilter] = useState('');
-    const [yearOptions, setYearOptions] = useState([]);
+    const [dateFrom, setDateFrom] = useState('');
+    const [dateTo, setDateTo] = useState('');
+    const [monthFilter, setMonthFilter] = useState('');
+    const [datePreset, setDatePreset] = useState('');
 
     // Restrictions configuration boundary parameters
     const canWrite = user && ['STUDENT', 'LECTURER'].includes(user.role);
@@ -71,11 +73,13 @@ export default function Publications({ user }) {
         publicationTypes.forEach((type) => params.append('pub_type', type));
         if (authorFilter.trim()) params.set('author', authorFilter.trim());
         if (subjectFilter.trim()) params.set('subject_area', subjectFilter.trim());
-        if (yearFilter) params.set('year', yearFilter);
+        if (dateFrom) params.set('date_from', dateFrom);
+        if (dateTo) params.set('date_to', dateTo);
+        if (monthFilter) params.set('month', monthFilter);
         const query = params.toString();
         const res = await API.get(`publications/${query ? `?${query}` : ''}`);
         return Array.isArray(res.data) ? res.data : [];
-        }, [search, searchFields, publicationTypes, authorFilter, subjectFilter, yearFilter]);
+        }, [search, searchFields, publicationTypes, authorFilter, subjectFilter, dateFrom, dateTo, monthFilter]);
 
 
     const toggleValue = (value, setValues) => {
@@ -84,22 +88,28 @@ export default function Publications({ user }) {
             : [...current, value]);
     };
 
-    const loadYearOptions = useCallback(() => {
-        API.get('publications/years/')
-            .then(({ data }) => setYearOptions(Array.isArray(data) ? data : []))
-            .catch((err) => console.error('Unable to load publication years:', err));
-    }, []);
-
-    useEffect(() => {
-        loadYearOptions();
-    }, [loadYearOptions]);
+    const applyDatePreset = (preset) => {
+        const currentYear = new Date().getFullYear();
+        setDatePreset(preset);
+        if (preset === 'this_year') {
+            setDateFrom(`${currentYear}-01-01`);
+            setDateTo(`${currentYear}-12-31`);
+        } else if (preset === 'last_three_years') {
+            setDateFrom(`${currentYear - 2}-01-01`);
+            setDateTo(`${currentYear}-12-31`);
+        } else {
+            setDateFrom('');
+            setDateTo('');
+        }
+        setPublicationsLoading(true);
+        setPublicationsError('');
+    };
 
     const refreshPublications = async () => {
         setPublicationsLoading(true);
         setPublicationsError('');
         try {
             setPublications(await fetchPublications());
-            loadYearOptions(); // a new submission may add a new year
         } catch (err) {
             console.error('Unable to refresh publications:', err);
             setPublicationsError(getErrorMessage(err, 'Unable to load publications. Please try again.'));
@@ -186,7 +196,8 @@ export default function Publications({ user }) {
     }, [publications, publicationsLoading, searchParams, setSearchParams]);
 
     const hasSearchFilters = Boolean(
-        search.trim() || publicationTypes.length || authorFilter.trim() || subjectFilter.trim() || yearFilter
+        search.trim() || publicationTypes.length || authorFilter.trim() || subjectFilter.trim()
+        || dateFrom || dateTo || monthFilter
     );
 
     const rankedSupervisors = supervisors.slice(0, 1);
@@ -627,33 +638,79 @@ export default function Publications({ user }) {
                                     style={filterInputStyle}
                                 />
                             </label>
-                        <label htmlFor="year-filter" style={filterInputLabelStyle}>
-                            Filter by year
-                            <select
-                                id="year-filter"
-                                value={yearFilter}
+                        <label htmlFor="date-from-filter" style={filterInputLabelStyle}>
+                            Published from
+                            <input
+                                id="date-from-filter"
+                                type="date"
+                                value={dateFrom}
                                 onChange={(event) => {
-                                    setYearFilter(event.target.value);
+                                    setDateFrom(event.target.value);
+                                    setDatePreset('');
+                                    setPublicationsLoading(true);
+                                    setPublicationsError('');
+                                }}
+                                style={filterInputStyle}
+                            />
+                        </label>
+                        <label htmlFor="date-to-filter" style={filterInputLabelStyle}>
+                            Published to
+                            <input
+                                id="date-to-filter"
+                                type="date"
+                                value={dateTo}
+                                onChange={(event) => {
+                                    setDateTo(event.target.value);
+                                    setDatePreset('');
+                                    setPublicationsLoading(true);
+                                    setPublicationsError('');
+                                }}
+                                style={filterInputStyle}
+                            />
+                        </label>
+                        <label htmlFor="month-filter" style={filterInputLabelStyle}>
+                            Month
+                            <select
+                                id="month-filter"
+                                value={monthFilter}
+                                onChange={(event) => {
+                                    setMonthFilter(event.target.value);
                                     setPublicationsLoading(true);
                                     setPublicationsError('');
                                 }}
                                 style={filterInputStyle}
                             >
-                                <option value="">All years</option>
-                                {yearOptions.map((year) => (
-                                    <option key={year} value={year}>{year}</option>
+                                <option value="">All months</option>
+                                {['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'].map((month, index) => (
+                                    <option key={month} value={index + 1}>{month}</option>
                                 ))}
                             </select>
                         </label>
+                        <label htmlFor="date-preset-filter" style={filterInputLabelStyle}>
+                            Quick range
+                            <select
+                                id="date-preset-filter"
+                                value={datePreset}
+                                onChange={(event) => applyDatePreset(event.target.value)}
+                                style={filterInputStyle}
+                            >
+                                <option value="">Custom / all dates</option>
+                                <option value="this_year">This year</option>
+                                <option value="last_three_years">Last 3 years</option>
+                            </select>
+                        </label>
                         </div>
-                        {(search || authorFilter || subjectFilter || yearFilter || publicationTypes.length > 0 || searchFields.length !== 4) && (
+                        {(search || authorFilter || subjectFilter || dateFrom || dateTo || monthFilter || publicationTypes.length > 0 || searchFields.length !== 4) && (
                             <button type="button" onClick={() => {
                                 setSearch('');
                                 setSearchFields(['title', 'abstract', 'author', 'subject_area']);
                                 setPublicationTypes([]);
                                 setAuthorFilter('');
                                 setSubjectFilter('');
-                                setYearFilter('');
+                                setDateFrom('');
+                                setDateTo('');
+                                setMonthFilter('');
+                                setDatePreset('');
                                 setPublicationsLoading(true);
                                 setPublicationsError('');
                             }} style={{ justifySelf: 'start', padding: 0, border: 0, background: 'transparent', color: '#0369a1', textDecoration: 'underline', cursor: 'pointer', font: 'inherit', fontSize: '.82rem' }}>

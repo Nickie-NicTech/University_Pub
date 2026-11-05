@@ -1,6 +1,8 @@
 from django.test import TestCase
 from django.urls import reverse
 from django.core.exceptions import ValidationError
+from datetime import datetime
+from django.utils import timezone
 from rest_framework import status
 from rest_framework.test import APITestCase
 from django.core.files.uploadedfile import SimpleUploadedFile
@@ -826,6 +828,47 @@ class PublicationTests(APITestCase):
             [('pub_type', 'CONFERENCE'), ('pub_type', 'JOURNAL'), ('author', 'Hopper'), ('subject_area', 'Computer')],
         )
         self.assertEqual({record['id'] for record in filtered.data}, {matching.id})
+
+    def test_publication_search_filters_date_range_and_month(self):
+        owner, _ = self.create_member('date-filter-owner')
+        publications = []
+        for title, submitted_at in [
+            ('Before range', datetime(2024, 1, 31)),
+            ('Range start', datetime(2024, 2, 1)),
+            ('Range end', datetime(2024, 3, 31)),
+            ('After range', datetime(2024, 4, 1)),
+        ]:
+            publication = Publication.objects.create(
+                title=title,
+                owner=owner,
+                abstract='A publication for date filter tests.',
+                pub_type='JOURNAL',
+                subject_area='Computer Science',
+                is_approved=True,
+            )
+            Publication.objects.filter(pk=publication.pk).update(
+                upload_date=timezone.make_aware(submitted_at),
+            )
+            publications.append(publication)
+        self.client.force_authenticate(user=owner)
+
+        date_range = self.client.get(
+            reverse('publication-list'),
+            {'date_from': '2024-02-01', 'date_to': '2024-03-31'},
+        )
+        self.assertEqual(
+            {record['id'] for record in date_range.data},
+            {publications[1].id, publications[2].id},
+        )
+
+        february = self.client.get(reverse('publication-list'), {'month': '2'})
+        self.assertEqual([record['id'] for record in february.data], [publications[1].id])
+
+        march_in_range = self.client.get(
+            reverse('publication-list'),
+            {'date_from': '2024-01-01', 'date_to': '2024-12-31', 'month': '3'},
+        )
+        self.assertEqual([record['id'] for record in march_in_range.data], [publications[2].id])
 
     def test_authenticated_repository_defaults_to_personal_items_and_searches_repository(self):
         member, _ = self.create_member('personal-repository-user')

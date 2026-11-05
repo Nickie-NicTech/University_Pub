@@ -1,5 +1,6 @@
 import secrets
 import logging
+from datetime import date
 from smtplib import SMTPException
 from django.db.models import Q, F, Sum
 from django.conf import settings
@@ -182,12 +183,38 @@ class PublicationViewSet(viewsets.ModelViewSet):
         if year_param.isdigit():
             queryset = queryset.filter(upload_date__year=int(year_param))
 
+        date_from_param = self.request.query_params.get('date_from', '').strip()
+        try:
+            date_from = date.fromisoformat(date_from_param) if date_from_param else None
+        except ValueError:
+            date_from = None
+        if date_from:
+            queryset = queryset.filter(upload_date__date__gte=date_from)
+
+        date_to_param = self.request.query_params.get('date_to', '').strip()
+        try:
+            date_to = date.fromisoformat(date_to_param) if date_to_param else None
+        except ValueError:
+            date_to = None
+        if date_to:
+            queryset = queryset.filter(upload_date__date__lte=date_to)
+
+        month_param = self.request.query_params.get('month', '').strip()
+        month = int(month_param) if month_param.isdigit() else None
+        if month and 1 <= month <= 12:
+            queryset = queryset.filter(upload_date__month=month)
+        else:
+            month = None
+
         has_search_filters = bool(
             search_query
             or publication_types
             or author_query
             or subject_area
             or year_param.isdigit()
+            or date_from
+            or date_to
+            or month
         )
         if (
             self.action == 'list'
