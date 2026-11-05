@@ -17,14 +17,14 @@ py -3.13 -m venv .venv
 pip install -r requirements.txt
 ```
 
-Set `DJANGO_SECRET_KEY` and `UNIPUB_ADMIN_PASSWORD` as process environment variables before running the server. `.env.example` lists the required names and is not loaded automatically by Django. In PowerShell, for example:
+Set `DJANGO_SECRET_KEY` and `UNIPUB_ADMIN_PASSWORD` as process environment variables before running the server. `.env.example` lists the required names and is not loaded automatically by Django. In PowerShell,
 
 ```powershell
 $env:DJANGO_SECRET_KEY = "<a generated random secret>"
-$env:UNIPUB_ADMIN_PASSWORD = "<your strong admin password>"
+$env:UNIPUB_ADMIN_PASSWORD = "admin"
 ```
 
-Configure `EMAIL_HOST`, `EMAIL_HOST_USER`, `EMAIL_HOST_PASSWORD`, and `DEFAULT_FROM_EMAIL` to enable supervisor and submitter email notifications. The email settings in `.env.example` are placeholders; set real values in the deployment environment and never commit credentials. Email is sent when a publication is submitted or resubmitted, revisions are requested, or a publication is approved.
+Configure `EMAIL_HOST`, `EMAIL_HOST_USER`, `EMAIL_HOST_PASSWORD`, and `DEFAULT_FROM_EMAIL` to enable supervisor and submitter email notifications. Email is sent when a publication is submitted or resubmitted, revisions are requested, or a publication is approved.
 
 ```powershell
 python manage.py migrate
@@ -54,4 +54,4 @@ Signed-in users see their own publications in the repository list by default; th
 
 ## Local data
 
-SQLite databases, uploaded publication files, environment files, Python caches, and frontend build/dependency directories are intentionally excluded from Git. Use migrations to create a fresh local database. The University identity directory is simulated data generated from the administrator portal.
+SQLite databases, uploaded publication files, environment files, Python caches, and frontend build/dependency directories are intentionally excluded from Git. Use migrations to create a fresh local database. The University identity directory is simulated(SAS) data generated from the administrator portal.
