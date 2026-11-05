@@ -24,7 +24,15 @@ $env:DJANGO_SECRET_KEY = "<a generated random secret>"
 $env:UNIPUB_ADMIN_PASSWORD = "admin"
 ```
 
-Configure `EMAIL_HOST`, `EMAIL_HOST_USER`, `EMAIL_HOST_PASSWORD`, and `DEFAULT_FROM_EMAIL` to enable supervisor and submitter email notifications. Email is sent when a publication is submitted or resubmitted, revisions are requested, or a publication is approved.
+Configured `EMAIL_HOST`, `EMAIL_HOST_USER`, `EMAIL_HOST_PASSWORD`, and `DEFAULT_FROM_EMAIL`(in deployment site) which enables supervisor and submitter email notifications. Email is sent when a publication is submitted or resubmitted, revisions are requested, or a publication is approved.
+
+### Google Apps Script mail integration
+
+Google Apps Script was used to  send UniPub notifications through the Gmail account that owns the script. This avoids storing a Gmail app password in Django.
+
+
+
+`
 
 ```powershell
 python manage.py migrate
@@ -44,7 +52,7 @@ The frontend API client currently targets `http://localhost:8000/api/`.
 
 ## Supervisor review workflow
 
-Students and lecturers submit a manuscript PDF with each new publication; an existing manuscript is kept when editing unless it is replaced. Lecturers can provide their skills and expertise in their profile. On submission, the system ranks active lecturers using regex-tokenized subject terms, approximate spelling matches, profile skills, departments, and existing mappings, then automatically assigns the top eligible lecturer and saves the inferred subject mapping for reuse. Administrators can add mappings or remove one to exclude that lecturer from automatic matching for the subject until they explicitly map them again. Each assigned lecturer receives an invitation and can accept or decline it. Lecturers open assigned manuscripts and the **Review desk** from their review notifications. An accepted reviewer can submit a decision immediately, even while another invitation is unanswered. The final outcome waits until all invitations are answered and every accepted reviewer has decided: all accepted reviewers must approve for publication, while revision feedback from any accepted reviewer requests changes. Declined invitations do not block the remaining accepted reviewers. Review requests and decisions are also sent as in-app notifications and email; clicking a revision notification takes the owner to the publication in their repository.
+Students and lecturers submit a manuscript PDF with each new publication; an existing manuscript is kept when editing unless it is replaced. Lecturers can provide their skills and expertise in their profile. On submission, the system ranks active lecturers using regex-tokenized subject terms, approximate spelling matches, profile skills, departments, and existing mappings, then automatically assigns the top eligible lecturer and saves the inferred subject mapping for reuse. Administrators can add mappings or remove one to exclude that lecturer from automatic matching for the subject until they explicitly map them again. Each assigned lecturer receives an invitation and can accept or decline it. Lecturers open assigned manuscripts and the **Review desk** from their review notifications. An accepted reviewer can submit a decision immediately, even while another invitation is unanswered. The final outcome waits until all invitations are answered and every accepted reviewer has decided: reviewer must approve for publication, while revision feedback from any accepted reviewer requests changes.   Review requests and decisions are also sent as in-app notifications and email; clicking a revision notification takes the owner to the publication in their repository.
 
 After upgrading an existing database, run migrations. Legacy reviewer accounts are converted to lecturers by the migration.
 
