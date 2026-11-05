@@ -2,9 +2,11 @@ import secrets
 import logging
 from datetime import date
 from smtplib import SMTPException
+from django.db import transaction
 from django.db.models import Q, F, Sum
 from django.conf import settings
 from django.core.mail import send_mail
+from django.core.files.storage import default_storage
 from django.utils import timezone
 from django.http import FileResponse
 from django.shortcuts import get_object_or_404
@@ -13,7 +15,7 @@ from rest_framework.decorators import action
 from rest_framework.views import APIView
 from rest_framework.exceptions import NotFound, PermissionDenied
 from rest_framework.response import Response
-from .models import Publication, PublicationReviewInvitation, ReviewerSubjectArea, ReviewerSubjectAreaExclusion, AuthorProfile, PublicationDeletionRequest, UserProfile, UserNotification, BroadcastMessage, UniversityDirectoryEntry
+from .models import Publication, PublicationVersion, PublicationReviewInvitation, ReviewerSubjectArea, ReviewerSubjectAreaExclusion, AuthorProfile, PublicationDeletionRequest, UserProfile, UserNotification, BroadcastMessage, UniversityDirectoryEntry
 from .serializers import PublicationSerializer, AuthorProfileSerializer, UserRegistrationSerializer, PublicationDeletionRequestSerializer, UserProfileSerializer, UserNotificationSerializer, BroadcastMessageSerializer, AdminUserSerializer, AdminUserCreateSerializer, UniversityDirectoryEntrySerializer, SupervisorSerializer, AdminSubjectMappingSerializer
 from .reviewer_matching import canonical_subject_area, rank_lecturers, subject_similarity
 import random
@@ -244,7 +246,35 @@ class PublicationViewSet(viewsets.ModelViewSet):
             publication.review_invitations.filter(status='INVITED').values_list('reviewer_id', flat=True)
         )
         resubmitting = publication.review_status == 'REVISION_REQUESTED'
-        publication = serializer.save(is_approved=False, review_feedback='')
+        latest_version = publication.versions.order_by('-version_number').values_list(
+            'version_number', flat=True,
+        ).first() or 0
+        snapshot = {
+            'title': publication.title,
+            'abstract': publication.abstract,
+            'pub_type': publication.pub_type,
+            'subject_area': publication.subject_area,
+            'authors': [
+                {'name': str(author), 'institution': author.institution}
+                for author in publication.authors.all()
+            ],
+            'reviewers': [
+                {
+                    'role': invitation.get_role_display(),
+                    'name': invitation.reviewer.get_full_name() or invitation.reviewer.username,
+                }
+                for invitation in publication.review_invitations.select_related('reviewer')
+            ],
+            'file_attachment': publication.file_attachment.name if publication.file_attachment else '',
+        }
+        with transaction.atomic():
+            PublicationVersion.objects.create(
+                publication=publication,
+                version_number=latest_version + 1,
+                changed_by=self.request.user,
+                snapshot=snapshot,
+            )
+            publication = serializer.save(is_approved=False, review_feedback='')
         accepted = publication.review_invitations.filter(status='ACCEPTED')
         if resubmitting:
             accepted.update(decision='PENDING', feedback='')
@@ -307,6 +337,36 @@ class PublicationViewSet(viewsets.ModelViewSet):
             {'detail': 'Permanent deletion is disabled. Owners may submit a deletion request.'},
             status=status.HTTP_405_METHOD_NOT_ALLOWED,
         )
+
+    @action(detail=True, methods=['get'], url_path='history')
+    def history(self, request, pk=None):
+        publication = self.get_object()
+        if (
+            not request.user.is_authenticated
+            or (publication.owner_id != request.user.id and not request.user.is_staff)
+        ):
+            raise PermissionDenied('Only the publication owner may view its change history.')
+
+        versions = publication.versions.select_related('changed_by').all()
+        history = []
+        for version in versions:
+            snapshot = version.snapshot.copy()
+            attachment = snapshot.get('file_attachment')
+            snapshot['file_attachment_url'] = (
+                request.build_absolute_uri(default_storage.url(attachment))
+                if attachment else ''
+            )
+            history.append({
+                'id': version.id,
+                'version_number': version.version_number,
+                'created_at': version.created_at,
+                'changed_by': (
+                    version.changed_by.get_full_name() or version.changed_by.username
+                    if version.changed_by else 'Former user'
+                ),
+                'snapshot': snapshot,
+            })
+        return Response(history)
 
     @action(detail=True, methods=['get'], url_path='download')
     def download(self, request, pk=None):

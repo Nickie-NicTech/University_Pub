@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { Flame, UserRoundPlus, Search, X, Check, Pencil, Trash2, Download, Eye, Plus, LoaderCircle, SlidersHorizontal } from 'lucide-react';
+import { Flame, UserRoundPlus, Search, X, Check, Pencil, Trash2, Download, Eye, Plus, LoaderCircle, SlidersHorizontal, History } from 'lucide-react';
 import API from '../api';
 
 export default function Publications({ user }) {
@@ -59,6 +59,10 @@ export default function Publications({ user }) {
     const [dateTo, setDateTo] = useState('');
     const [monthFilter, setMonthFilter] = useState('');
     const [datePreset, setDatePreset] = useState('');
+    const [expandedHistoryId, setExpandedHistoryId] = useState(null);
+    const [publicationHistory, setPublicationHistory] = useState({});
+    const [historyLoadingId, setHistoryLoadingId] = useState(null);
+    const [historyError, setHistoryError] = useState('');
 
     // Restrictions configuration boundary parameters
     const canWrite = user && ['STUDENT', 'LECTURER'].includes(user.role);
@@ -103,6 +107,31 @@ export default function Publications({ user }) {
         }
         setPublicationsLoading(true);
         setPublicationsError('');
+    };
+
+    const togglePublicationHistory = async (publicationId) => {
+        if (expandedHistoryId === publicationId) {
+            setExpandedHistoryId(null);
+            return;
+        }
+
+        setExpandedHistoryId(publicationId);
+        setHistoryError('');
+        if (Object.hasOwn(publicationHistory, publicationId)) return;
+
+        setHistoryLoadingId(publicationId);
+        try {
+            const { data } = await API.get(`publications/${publicationId}/history/`);
+            setPublicationHistory((current) => ({
+                ...current,
+                [publicationId]: Array.isArray(data) ? data : [],
+            }));
+        } catch (err) {
+            console.error('Unable to load publication history:', err);
+            setHistoryError(getErrorMessage(err, 'Unable to load publication history.'));
+        } finally {
+            setHistoryLoadingId(null);
+        }
     };
 
     const refreshPublications = async () => {
@@ -448,6 +477,13 @@ export default function Publications({ user }) {
                 type: 'success',
                 message: `${editingId ? 'Publication changes saved successfully and resubmitted for review.' : 'Publication submitted successfully and is pending review.'}${reviewerAssignment}${response.data.notification_warning ? ` ${response.data.notification_warning}` : ''}`,
             });
+            if (editingId) {
+                setPublicationHistory((current) => {
+                    const next = { ...current };
+                    delete next[editingId];
+                    return next;
+                });
+            }
             clearForm();
             setShowSubmissionForm(false);
             await refreshPublications();
@@ -833,6 +869,16 @@ export default function Publications({ user }) {
                                     {pub.is_owner && (
                                         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '8px' }}>
                                             <div style={{ display: 'flex', gap: '8px' }}>
+                                                <button
+                                                    type="button"
+                                                    title="View publication change history"
+                                                    aria-label={`View change history for ${pub.title}`}
+                                                    aria-expanded={expandedHistoryId === pub.id}
+                                                    onClick={() => togglePublicationHistory(pub.id)}
+                                                    style={iconButtonStyle}
+                                                >
+                                                    <History size={17} aria-hidden="true" />
+                                                </button>
                                                 {!pub.is_approved && pub.review_status !== 'APPROVED' && (
                                                     <>
                                                         <button title="Edit publication" aria-label="Edit publication" onClick={() => startEditing(pub)} style={iconButtonStyle}><Pencil size={17} aria-hidden="true" /></button>
@@ -855,6 +901,40 @@ export default function Publications({ user }) {
                                     )}
                                     </div>
                                 </div>
+                                {pub.is_owner && expandedHistoryId === pub.id && (
+                                    <section aria-label={`Change history for ${pub.title}`} style={{ marginTop: '14px', paddingTop: '12px', borderTop: '1px solid #e2e8f0' }}>
+                                        <h4 style={{ margin: '0 0 10px', color: '#334155', fontSize: '.9rem' }}>Change history</h4>
+                                        {historyLoadingId === pub.id ? (
+                                            <p role="status" style={{ margin: 0, color: '#64748b', fontSize: '.84rem' }}>Loading history…</p>
+                                        ) : historyError ? (
+                                            <p role="alert" style={{ margin: 0, color: '#b91c1c', fontSize: '.84rem' }}>{historyError}</p>
+                                        ) : publicationHistory[pub.id]?.length ? (
+                                            <ol style={{ display: 'grid', gap: '8px', margin: 0, paddingLeft: '22px' }}>
+                                                {publicationHistory[pub.id].map((version) => (
+                                                    <li key={version.id} style={{ color: '#475569', fontSize: '.84rem' }}>
+                                                        <details>
+                                                            <summary style={{ cursor: 'pointer', color: '#334155', fontWeight: 600 }}>
+                                                                Version {version.version_number} · archived {new Date(version.created_at).toLocaleString()} by {version.changed_by}
+                                                            </summary>
+                                                            <div style={{ marginTop: '8px', padding: '10px 12px', background: '#f8fafc', borderRadius: '5px', lineHeight: 1.5, overflowWrap: 'anywhere' }}>
+                                                                <p style={{ margin: '0 0 5px' }}><strong>Title:</strong> {version.snapshot.title}</p>
+                                                                <p style={{ margin: '0 0 5px' }}><strong>Type:</strong> {version.snapshot.pub_type} · <strong>Subject:</strong> {version.snapshot.subject_area}</p>
+                                                                <p style={{ margin: '0 0 5px' }}><strong>Authors:</strong> {version.snapshot.authors.map((author) => author.name).join('; ') || 'None listed'}</p>
+                                                                <p style={{ margin: '0 0 5px' }}><strong>Reviewers:</strong> {version.snapshot.reviewers.map((reviewer) => `${reviewer.name} (${reviewer.role})`).join('; ') || 'None assigned'}</p>
+                                                                <p style={{ margin: '0 0 5px', whiteSpace: 'pre-wrap' }}><strong>Abstract:</strong> {version.snapshot.abstract}</p>
+                                                                {version.snapshot.file_attachment_url && (
+                                                                    <a href={version.snapshot.file_attachment_url} target="_blank" rel="noreferrer" style={{ color: '#0369a1' }}>View previous manuscript</a>
+                                                                )}
+                                                            </div>
+                                                        </details>
+                                                    </li>
+                                                ))}
+                                            </ol>
+                                        ) : (
+                                            <p style={{ margin: 0, color: '#64748b', fontSize: '.84rem' }}>No previous versions have been recorded yet. Future edits will appear here.</p>
+                                        )}
+                                    </section>
+                                )}
                                 {pub.is_owner && pub.review_feedback && (
                                     <div role="note" style={{ marginTop: '12px', padding: '11px 13px', borderLeft: '3px solid #c2410c', background: '#fff7ed', color: '#7c2d12', fontSize: '0.84rem', lineHeight: 1.5 }}>
                                         <strong>Supervisor feedback:</strong> {pub.review_feedback}
