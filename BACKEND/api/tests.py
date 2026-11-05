@@ -240,6 +240,36 @@ class PublicationTests(APITestCase):
         )
         return user, profile
 
+
+    def assign_predefined_reviewer(self, author, reviewer):
+        reviewer_entry, _ = UniversityDirectoryEntry.objects.get_or_create(
+            claimed_by=reviewer,
+            defaults={
+                'university_id': f'1{reviewer.pk:07d}',
+                'person_type': 'LECTURER',
+                'first_name': reviewer.first_name or 'Test',
+                'last_name': reviewer.last_name or 'Lecturer',
+                'email': f'reviewer-{reviewer.pk}@example.com',
+                'department': 'Computer Science',
+            },
+        )
+
+        author_entry, _ = UniversityDirectoryEntry.objects.get_or_create(
+            claimed_by=author,
+            defaults={
+                'university_id': f'2026{author.pk:05d}',
+                'person_type': 'LECTURER' if author.profile.role == 'LECTURER' else 'STUDENT',
+                'first_name': author.first_name or 'Test',
+                'last_name': author.last_name or 'Author',
+                'email': f'author-{author.pk}@example.com',
+                'department': 'Computer Science',
+            },
+        )
+
+        author_entry.assigned_reviewer = reviewer_entry
+        author_entry.save(update_fields=['assigned_reviewer'])
+        return author_entry
+
     def create_review_publication(self, owner, reviewer, **fields):
         publication = Publication.objects.create(
             owner=owner,
@@ -296,15 +326,33 @@ class PublicationTests(APITestCase):
         other = next(item for item in response.data if item['user_id'] == other_lecturer.id)
         self.assertFalse(other['is_subject_match'])
 
-    def test_publication_creation_automatically_assigns_one_subject_mapped_reviewer(self):
-        reviewer, _ = self.create_supervisor('auto-reviewer')
-        other_reviewer, _ = self.create_supervisor('other-auto-reviewer')
-        owner, _ = self.create_member('auto-reviewer-owner')
+    
+    def test_publication_creation_uses_predefined_reviewer(self):
+        reviewer, _ = self.create_supervisor('predefined-reviewer')
+        other_reviewer, _ = self.create_supervisor('subject-expert')
+        owner, _ = self.create_member('predefined-author')
 
-        ReviewerSubjectArea.objects.create(
-            reviewer=reviewer,
-            subject_area='Artificial Intelligence',
+        reviewer_entry = UniversityDirectoryEntry.objects.create(
+            university_id='10000003',
+            person_type='LECTURER',
+            first_name='Dineo',
+            last_name='Ramoabi',
+            email='dineo@example.com',
+            department='Education',
+            claimed_by=reviewer,
         )
+
+        UniversityDirectoryEntry.objects.create(
+            university_id='202600005',
+            person_type='STUDENT',
+            first_name='Naledi',
+            last_name='Kgosidintsi',
+            email='naledi@example.com',
+            department='Education',
+            claimed_by=owner,
+            assigned_reviewer=reviewer_entry,
+        )
+
         ReviewerSubjectArea.objects.create(
             reviewer=other_reviewer,
             subject_area='Artificial Intelligence',
@@ -315,7 +363,7 @@ class PublicationTests(APITestCase):
         response = self.client.post(
             reverse('publication-list'),
             {
-                'title': 'Automatically assigned paper',
+                'title': 'Publication with predefined reviewer',
                 'abstract': self.valid_abstract,
                 'pub_type': 'JOURNAL',
                 'subject_area': 'Artificial Intelligence',
@@ -327,9 +375,17 @@ class PublicationTests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_201_CREATED, response.data)
         self.assertEqual(response.data['supervisor_id'], reviewer.id)
         self.assertIsNone(response.data['co_supervisor_id'])
-        self.assertEqual(response.data['supervisor_name'], reviewer.get_full_name() or reviewer.username)
+        self.assertTrue(
+            PublicationReviewInvitation.objects.filter(
+                publication_id=response.data['id'],
+                reviewer=reviewer,
+                role='SUPERVISOR',
+                status='INVITED',
+            ).exists()
+        )
 
-    def test_publication_creation_automatically_matches_lecturer_expertise(self):
+
+    def test_publication_uses_predefined_reviewer_instead_of_subject_expertise(self):
         matching, matching_profile = self.create_supervisor('expertise-matched-lecturer')
         other, _ = self.create_supervisor('expertise-unmatched-lecturer')
         matching_profile.skillset = 'Software engeneering and databases'
@@ -337,6 +393,7 @@ class PublicationTests(APITestCase):
         other.profile.skillset = 'Education and curriculum design'
         other.profile.save(update_fields=['skillset'])
         owner, _ = self.create_member('unmapped-subject-owner')
+        self.assign_predefined_reviewer(owner, other)
         self.client.force_authenticate(user=owner)
 
         response = self.client.post(
@@ -352,21 +409,25 @@ class PublicationTests(APITestCase):
         )
 
         self.assertEqual(response.status_code, status.HTTP_201_CREATED, response.data)
-        self.assertEqual(response.data['supervisor_id'], matching.id)
-        self.assertTrue(ReviewerSubjectArea.objects.filter(
-            reviewer=matching,
-            subject_area='Software Engineering',
+        self.assertEqual(response.data['supervisor_id'], other.id)
+        self.assertTrue(PublicationReviewInvitation.objects.filter(
+            publication_id=response.data['id'],
+            reviewer=other,
+            role='SUPERVISOR',
         ).exists())
         typo_match = self.client.get(
             reverse('supervisor_list'),
             {'subject_area': 'Software engeneering'},
         )
         self.assertEqual(typo_match.status_code, status.HTTP_200_OK)
-        self.assertEqual(typo_match.data[0]['user_id'], matching.id)
-
+        self.assertIn(
+            matching.id,
+            [lecturer['user_id'] for lecturer in typo_match.data],
+        )
     def test_publication_creation_requires_a_valid_pdf_manuscript(self):
         supervisor, _ = self.create_supervisor('required-file-supervisor')
         owner, _ = self.create_member('required-file-owner')
+        self.assign_predefined_reviewer(owner, supervisor)
         self.client.force_authenticate(user=owner)
         payload = {
             'title': 'Manuscript required',
@@ -395,10 +456,11 @@ class PublicationTests(APITestCase):
         self.assertEqual(valid.status_code, status.HTTP_201_CREATED, valid.data)
         self.assertEqual(valid.data['supervisor_id'], supervisor.id)
 
-    def test_owner_can_reassign_unanswered_mapped_supervisor_while_editing(self):
+    def test_owner_cannot_reassign_unanswered_predefined_reviewer(self):
         mapped_supervisor, _ = self.create_supervisor('unanswered-mapped-supervisor')
         replacement_supervisor, _ = self.create_supervisor('unanswered-replacement-supervisor')
         owner, _ = self.create_member('unanswered-assignment-owner')
+        self.assign_predefined_reviewer(owner, mapped_supervisor)
         ReviewerSubjectArea.objects.create(reviewer=mapped_supervisor, subject_area='Data Science')
         self.client.force_authenticate(user=owner)
         created = self.client.post(
@@ -419,17 +481,21 @@ class PublicationTests(APITestCase):
             format='json',
         )
 
-        self.assertEqual(updated.status_code, status.HTTP_200_OK, updated.data)
-        self.assertEqual(updated.data['supervisor_id'], replacement_supervisor.id)
-        self.assertFalse(PublicationReviewInvitation.objects.filter(
+        self.assertEqual(updated.status_code, status.HTTP_400_BAD_REQUEST, updated.data)
+        self.assertTrue(PublicationReviewInvitation.objects.filter(
             publication_id=created.data['id'],
             reviewer=mapped_supervisor,
         ).exists())
+        self.assertFalse(PublicationReviewInvitation.objects.filter(
+            publication_id=created.data['id'],
+            reviewer=replacement_supervisor,
+        ).exists())
 
-    def test_owner_can_replace_declined_supervisor_invitation(self):
+    def test_owner_cannot_replace_declined_predefined_reviewer(self):        
         declined_supervisor, _ = self.create_supervisor('declined-mapped-supervisor')
         replacement_supervisor, _ = self.create_supervisor('declined-replacement-supervisor')
         owner, _ = self.create_member('declined-assignment-owner')
+        self.assign_predefined_reviewer(owner, declined_supervisor)
         ReviewerSubjectArea.objects.create(reviewer=declined_supervisor, subject_area='Data Science')
         self.client.force_authenticate(user=owner)
         created = self.client.post(
@@ -459,13 +525,18 @@ class PublicationTests(APITestCase):
             format='json',
         )
 
-        self.assertEqual(updated.status_code, status.HTTP_200_OK, updated.data)
-        self.assertEqual(updated.data['supervisor_id'], replacement_supervisor.id)
-        new_invitation = PublicationReviewInvitation.objects.get(
+        self.assertEqual(updated.status_code, status.HTTP_400_BAD_REQUEST, updated.data)
+
+        original_invitation = PublicationReviewInvitation.objects.get(
+            publication_id=publication_id,
+            reviewer=declined_supervisor,
+        )
+        self.assertEqual(original_invitation.status, 'DECLINED')
+
+        self.assertFalse(PublicationReviewInvitation.objects.filter(
             publication_id=publication_id,
             reviewer=replacement_supervisor,
-        )
-        self.assertEqual(new_invitation.status, 'INVITED')
+        ).exists())
 
 
 
@@ -473,6 +544,7 @@ class PublicationTests(APITestCase):
         supervisor, _ = self.create_supervisor('accepted-assignment-supervisor')
         replacement_supervisor, _ = self.create_supervisor('accepted-replacement-supervisor')
         owner, _ = self.create_member('accepted-assignment-owner')
+        self.assign_predefined_reviewer(owner, supervisor)                       
         ReviewerSubjectArea.objects.create(reviewer=supervisor, subject_area='Data Science')
         self.client.force_authenticate(user=owner)
         created = self.client.post(
@@ -674,8 +746,9 @@ class PublicationTests(APITestCase):
         self.assertEqual(response.data['pending_deletion_requests'], 1)
 
     def test_only_owner_can_edit_publication(self):
-        _, supervisor = self.create_supervisor()
+        reviewer, supervisor = self.create_supervisor()
         owner, _ = self.create_member('owner', supervisor)
+        self.assign_predefined_reviewer(owner, reviewer)
         other_user, _ = self.create_member('other', supervisor)
         self.client.force_authenticate(user=owner)
         create_response = self.client.post(
@@ -684,6 +757,17 @@ class PublicationTests(APITestCase):
             format='multipart',
         )
         publication_id = create_response.data['id']
+        owner_update = self.client.patch(
+            reverse('publication-detail', args=[publication_id]),
+            {'title': 'Updated by owner'},
+            format='json',
+        )
+        self.assertEqual(owner_update.status_code, status.HTTP_200_OK, owner_update.data)
+        self.assertEqual(owner_update.data['title'], 'Updated by owner')
+        self.assertTrue(PublicationReviewInvitation.objects.filter(
+            publication_id=publication_id,
+            reviewer=reviewer,
+        ).exists())
 
         self.client.force_authenticate(user=other_user)
         response = self.client.patch(
@@ -872,6 +956,7 @@ class PublicationTests(APITestCase):
     def test_assigned_reviewer_can_accept_and_approve_publication(self):
         reviewer, _ = self.create_supervisor('approval-reviewer')
         owner, _ = self.create_member('approval-owner')
+        self.assign_predefined_reviewer(owner, reviewer)
         reader, _ = self.create_member('approval-reader', role='LECTURER')
 
         self.client.force_authenticate(user=owner)
@@ -933,6 +1018,7 @@ class PublicationTests(APITestCase):
     def test_reviewers_can_request_revisions_then_owner_resubmits(self):
         reviewer, _ = self.create_supervisor('revision-supervisor')
         owner, _ = self.create_member('revision-owner')
+        self.assign_predefined_reviewer(owner, reviewer)
         self.client.force_authenticate(user=owner)
         response = self.client.post(
             reverse('publication-list'),
@@ -977,10 +1063,11 @@ class PublicationTests(APITestCase):
         invitation = publication.review_invitations.get(reviewer=reviewer)
         self.assertEqual(invitation.decision, 'PENDING')
 
-    def test_owner_can_clear_optional_co_supervisor(self):
+    def test_owner_cannot_manually_change_predefined_reviewers(self):
         supervisor, _ = self.create_supervisor('primary-supervisor')
         co_supervisor, _ = self.create_supervisor('optional-co-supervisor')
         owner, _ = self.create_member('co-supervisor-owner')
+        self.assign_predefined_reviewer(owner, supervisor)
         self.client.force_authenticate(user=owner)
         created = self.client.post(
             reverse('publication-list'),
@@ -1010,8 +1097,7 @@ class PublicationTests(APITestCase):
             format='multipart',
         )
 
-        self.assertEqual(updated.status_code, status.HTTP_200_OK, updated.data)
-        self.assertIsNone(updated.data['co_supervisor_id'])
+        self.assertEqual(updated.status_code, status.HTTP_400_BAD_REQUEST, updated.data)
         self.assertFalse(PublicationReviewInvitation.objects.filter(
             publication_id=created.data['id'],
             role='CO_SUPERVISOR',
@@ -1035,8 +1121,9 @@ class PublicationTests(APITestCase):
         self.assertEqual(b''.join(download.streaming_content), b'%PDF-1.4 test')
 
     def test_only_owner_can_request_publication_deletion(self):
-        _, supervisor = self.create_supervisor('deletion-supervisor')
+        reviewer, supervisor = self.create_supervisor('deletion-supervisor')
         owner, _ = self.create_member('deletion-owner', supervisor)
+        self.assign_predefined_reviewer(owner, reviewer)
         other_user, _ = self.create_member('deletion-other', supervisor)
         self.client.force_authenticate(user=owner)
         create_response = self.client.post(
@@ -1083,8 +1170,9 @@ class PublicationTests(APITestCase):
         self.assertEqual(search_response.data[0]['name'], 'Ada Researcher')
 
     def test_publication_can_be_created_with_selected_authors(self):
-        _, supervisor = self.create_supervisor('author-publication-supervisor')
+        reviewer, supervisor = self.create_supervisor('author-publication-supervisor')
         user, _ = self.create_member('multi-author-owner', supervisor)
+        self.assign_predefined_reviewer(user, reviewer)
         self.client.force_authenticate(user=user)
         author = AuthorProfile.objects.create(first_name='Grace', last_name='Hopper')
 
@@ -1109,6 +1197,7 @@ class PublicationTests(APITestCase):
     def test_login_access_token_authorizes_publication_upload(self):
         reviewer, supervisor = self.create_supervisor('token-supervisor')
         user, _ = self.create_member('token-student', supervisor)
+        self.assign_predefined_reviewer(user, reviewer)
         token_response = self.client.post(
             reverse('token_obtain_pair'),
             {'username': 'token-student', 'password': 'test-password'},
@@ -1135,6 +1224,7 @@ class PublicationTests(APITestCase):
     def test_authenticated_user_can_upload_publication_without_authors_field(self):
         reviewer, supervisor = self.create_supervisor('upload-supervisor')
         user, _ = self.create_member('student', supervisor)
+        self.assign_predefined_reviewer(user, reviewer)
         self.client.force_authenticate(user=user)
 
         response = self.client.post(
@@ -1158,6 +1248,7 @@ class PublicationTests(APITestCase):
     def test_create_publication(self):
         reviewer, supervisor = self.create_supervisor('publication-supervisor')
         user, _ = self.create_member('publication-author', supervisor)
+        self.assign_predefined_reviewer(user, reviewer)
         self.client.force_authenticate(user=user)
         url = reverse('publication-list') # matches router endpoint
         data = {
@@ -1170,7 +1261,7 @@ class PublicationTests(APITestCase):
             'file_attachment': self.manuscript_upload(),
         }
         response = self.client.post(url, data, format='multipart')
-        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED, response.data)
         self.assertEqual(Publication.objects.count(), 1)
 
     def test_publication_abstract_too_short_is_rejected(self):
@@ -1218,6 +1309,7 @@ class PublicationTests(APITestCase):
     def test_publication_abstract_lower_boundary_150_words_is_accepted(self):
         reviewer, _ = self.create_supervisor('boundary-min-reviewer')
         user, _ = self.create_member('boundary-min-author')
+        self.assign_predefined_reviewer(user, reviewer)        
         self.client.force_authenticate(user=user)
         boundary_min_abstract = ' '.join(['word'] * 150)
         response = self.client.post(
@@ -1238,6 +1330,7 @@ class PublicationTests(APITestCase):
     def test_publication_abstract_upper_boundary_250_words_is_accepted(self):
         reviewer, _ = self.create_supervisor('boundary-max-reviewer')
         user, _ = self.create_member('boundary-max-author')
+        self.assign_predefined_reviewer(user, reviewer)
         self.client.force_authenticate(user=user)
         boundary_max_abstract = ' '.join(['word'] * 250)
         response = self.client.post(
