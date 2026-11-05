@@ -1,5 +1,16 @@
 from django.db import models
 from django.contrib.auth.models import User
+from django.core.exceptions import ValidationError
+
+
+def validate_abstract_word_count(value):
+    if not value or not str(value).strip():
+        raise ValidationError('The abstract description is required.')
+    word_count = len(str(value).strip().split())
+    if word_count < 150 or word_count > 250:
+        raise ValidationError(
+            f'The abstract must be between 150 and 250 words (currently {word_count} words).'
+        )
 
 class UserProfile(models.Model):
     ROLE_CHOICES = [
@@ -55,6 +66,13 @@ class AuthorProfile(models.Model):
         return self.user.get_full_name() if self.user else f"Author {self.pk}"
 
 class Publication(models.Model):
+    SUBJECT_AREA_CHOICES = [
+        ('Computer Science', 'Computer Science'),
+        ('Software Engineering', 'Software Engineering'),
+        ('Artificial Intelligence', 'Artificial Intelligence'),
+        ('Data Science', 'Data Science'),
+        ('Cybersecurity', 'Cybersecurity'),
+    ]
     REVIEW_STATUS_CHOICES = [
         ('PENDING_INVITATIONS', 'Waiting for invited reviewers'),
         ('PENDING', 'Pending review'),
@@ -73,16 +91,24 @@ class Publication(models.Model):
     title = models.CharField(max_length=255)
     owner = models.ForeignKey(User, on_delete=models.SET_NULL, related_name='owned_publications', blank=True, null=True)
     assigned_reviewer = models.ForeignKey(User, on_delete=models.SET_NULL, related_name='assigned_publications', blank=True, null=True)
-    abstract = models.TextField()
+    abstract = models.TextField(validators=[validate_abstract_word_count])
     pub_type = models.CharField(max_length=20, choices=PUBLICATION_TYPES)
-    subject_area = models.CharField(max_length=100)
+    subject_area = models.CharField(max_length=100, choices=SUBJECT_AREA_CHOICES)
     authors = models.ManyToManyField(AuthorProfile, related_name='publications')
     file_attachment = models.FileField(upload_to='publications/%Y/%m/', blank=True, null=True)
     download_count = models.PositiveIntegerField(default=0)
-    upload_date = models.DateTimeField(auto_now_add=True)
+ 
     is_approved = models.BooleanField(default=False) # For the verification milestone
     review_status = models.CharField(max_length=20, choices=REVIEW_STATUS_CHOICES, default='PENDING_INVITATIONS')
     review_feedback = models.TextField(blank=True)
+
+    upload_date = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def clean(self):
+        super().clean()
+        if self.abstract:
+            validate_abstract_word_count(self.abstract)
 
     def save(self, *args, **kwargs):
         if self.is_approved:
