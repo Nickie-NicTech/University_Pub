@@ -55,6 +55,8 @@ export default function Publications({ user }) {
     const [supervisorError, setSupervisorError] = useState('');
     const [supervisorId, setSupervisorId] = useState('');
     const [coSupervisorId, setCoSupervisorId] = useState('');
+    const [yearFilter, setYearFilter] = useState('');
+    const [yearOptions, setYearOptions] = useState([]);
 
     // Restrictions configuration boundary parameters
     const canWrite = user && ['STUDENT', 'LECTURER'].includes(user.role);
@@ -62,17 +64,19 @@ export default function Publications({ user }) {
     const fetchPublications = useCallback(async () => {
         const params = new URLSearchParams();
         if (search.trim()) {
-            params.set('search', search.trim());
-            searchFields.forEach((field) => params.append('search_in', field));
-            if (searchFields.length === 0) params.append('search_in', 'none');
+        params.set('search', search.trim());
+        searchFields.forEach((field) => params.append('search_in', field));
+        if (searchFields.length === 0) params.append('search_in', 'none');
         }
         publicationTypes.forEach((type) => params.append('pub_type', type));
         if (authorFilter.trim()) params.set('author', authorFilter.trim());
         if (subjectFilter.trim()) params.set('subject_area', subjectFilter.trim());
+        if (yearFilter) params.set('year', yearFilter);
         const query = params.toString();
         const res = await API.get(`publications/${query ? `?${query}` : ''}`);
         return Array.isArray(res.data) ? res.data : [];
-    }, [search, searchFields, publicationTypes, authorFilter, subjectFilter]);
+        }, [search, searchFields, publicationTypes, authorFilter, subjectFilter, yearFilter]);
+
 
     const toggleValue = (value, setValues) => {
         setValues((current) => current.includes(value)
@@ -80,11 +84,22 @@ export default function Publications({ user }) {
             : [...current, value]);
     };
 
+    const loadYearOptions = useCallback(() => {
+        API.get('publications/years/')
+            .then(({ data }) => setYearOptions(Array.isArray(data) ? data : []))
+            .catch((err) => console.error('Unable to load publication years:', err));
+    }, []);
+
+    useEffect(() => {
+        loadYearOptions();
+    }, [loadYearOptions]);
+
     const refreshPublications = async () => {
         setPublicationsLoading(true);
         setPublicationsError('');
         try {
             setPublications(await fetchPublications());
+            loadYearOptions(); // a new submission may add a new year
         } catch (err) {
             console.error('Unable to refresh publications:', err);
             setPublicationsError(getErrorMessage(err, 'Unable to load publications. Please try again.'));
@@ -171,8 +186,9 @@ export default function Publications({ user }) {
     }, [publications, publicationsLoading, searchParams, setSearchParams]);
 
     const hasSearchFilters = Boolean(
-        search.trim() || publicationTypes.length || authorFilter.trim() || subjectFilter.trim()
+        search.trim() || publicationTypes.length || authorFilter.trim() || subjectFilter.trim() || yearFilter
     );
+
     const rankedSupervisors = supervisors.slice(0, 1);
     const reviewInvitations = editingPublication?.review_invitations || [];
     const noReviewersResponded = reviewInvitations.length > 0
@@ -611,14 +627,33 @@ export default function Publications({ user }) {
                                     style={filterInputStyle}
                                 />
                             </label>
+                        <label htmlFor="year-filter" style={filterInputLabelStyle}>
+                            Filter by year
+                            <select
+                                id="year-filter"
+                                value={yearFilter}
+                                onChange={(event) => {
+                                    setYearFilter(event.target.value);
+                                    setPublicationsLoading(true);
+                                    setPublicationsError('');
+                                }}
+                                style={filterInputStyle}
+                            >
+                                <option value="">All years</option>
+                                {yearOptions.map((year) => (
+                                    <option key={year} value={year}>{year}</option>
+                                ))}
+                            </select>
+                        </label>
                         </div>
-                        {(search || authorFilter || subjectFilter || publicationTypes.length > 0 || searchFields.length !== 4) && (
+                        {(search || authorFilter || subjectFilter || yearFilter || publicationTypes.length > 0 || searchFields.length !== 4) && (
                             <button type="button" onClick={() => {
                                 setSearch('');
                                 setSearchFields(['title', 'abstract', 'author', 'subject_area']);
                                 setPublicationTypes([]);
                                 setAuthorFilter('');
                                 setSubjectFilter('');
+                                setYearFilter('');
                                 setPublicationsLoading(true);
                                 setPublicationsError('');
                             }} style={{ justifySelf: 'start', padding: 0, border: 0, background: 'transparent', color: '#0369a1', textDecoration: 'underline', cursor: 'pointer', font: 'inherit', fontSize: '.82rem' }}>

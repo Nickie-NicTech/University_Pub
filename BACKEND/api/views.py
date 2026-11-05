@@ -118,7 +118,7 @@ class PublicationViewSet(viewsets.ModelViewSet):
     serializer_class = PublicationSerializer
 
     def get_queryset(self):
-        queryset = Publication.objects.all().order_by('upload_date')
+        queryset = Publication.objects.all().order_by('upload_date', 'id')
         queryset = queryset.prefetch_related('review_invitations__reviewer', 'authors')
         user = self.request.user
         highlight_mode = (
@@ -147,9 +147,9 @@ class PublicationViewSet(viewsets.ModelViewSet):
                 'title': Q(title__icontains=search_query),
                 'abstract': Q(abstract__icontains=search_query),
                 'subject_area': Q(subject_area__icontains=search_query),
-                'author':author_name_q(search_query),
+                'author': author_name_q(search_query),
             }
-        
+
             requested_fields = self.request.query_params.getlist('search_in')
             search_fields = set(requested_fields) if requested_fields else set(supported_fields)
             search_filter = Q()
@@ -169,11 +169,17 @@ class PublicationViewSet(viewsets.ModelViewSet):
         if subject_area:
             queryset = queryset.filter(subject_area__icontains=subject_area)
 
+        # Filter by submission year (upload_date does not change on edits)
+        year_param = self.request.query_params.get('year', '').strip()
+        if year_param.isdigit():
+            queryset = queryset.filter(upload_date__year=int(year_param))
+
         has_search_filters = bool(
             search_query
             or publication_types
             or author_query
             or subject_area
+            or year_param.isdigit()
         )
         if (
             self.action == 'list'
@@ -183,7 +189,13 @@ class PublicationViewSet(viewsets.ModelViewSet):
             and not review_assignment_mode
         ):
             queryset = queryset.filter(owner=user)
+
+        # Highlights show the newest items first; everything else is oldest at the top
+        if highlight_mode:
+            queryset = queryset.order_by('-upload_date', '-id')
+
         return queryset
+
 
     def perform_update(self, serializer):
         publication = self.get_object()
