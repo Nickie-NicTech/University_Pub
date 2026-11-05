@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { Flame, UserRoundPlus, Search, X, Check, Pencil, Trash2, Download, Eye, Plus, LoaderCircle, SlidersHorizontal } from 'lucide-react';
+import { Flame, UserRoundPlus, Search, X, Check, Pencil, Trash2, Download, Eye, Plus, LoaderCircle, SlidersHorizontal, History } from 'lucide-react';
 import API from '../api';
 
 export default function Publications({ user }) {
@@ -50,6 +50,19 @@ export default function Publications({ user }) {
     const [authorLoading, setAuthorLoading] = useState(false);
     const [authorWorksError, setAuthorWorksError] = useState('');
     const [publicationSaving, setPublicationSaving] = useState(false);
+    const [supervisors, setSupervisors] = useState([]);
+    const [supervisorLoading, setSupervisorLoading] = useState(true);
+    const [supervisorError, setSupervisorError] = useState('');
+    const [supervisorId, setSupervisorId] = useState('');
+    const [coSupervisorId, setCoSupervisorId] = useState('');
+    const [dateFrom, setDateFrom] = useState('');
+    const [dateTo, setDateTo] = useState('');
+    const [monthFilter, setMonthFilter] = useState('');
+    const [datePreset, setDatePreset] = useState('');
+    const [expandedHistoryId, setExpandedHistoryId] = useState(null);
+    const [publicationHistory, setPublicationHistory] = useState({});
+    const [historyLoadingId, setHistoryLoadingId] = useState(null);
+    const [historyError, setHistoryError] = useState('');
 
     // Restrictions configuration boundary parameters
     const canWrite = user && ['STUDENT', 'LECTURER'].includes(user.role);
@@ -64,22 +77,68 @@ export default function Publications({ user }) {
     const fetchPublications = useCallback(async () => {
         const params = new URLSearchParams();
         if (search.trim()) {
-            params.set('search', search.trim());
-            searchFields.forEach((field) => params.append('search_in', field));
-            if (searchFields.length === 0) params.append('search_in', 'none');
+        params.set('search', search.trim());
+        searchFields.forEach((field) => params.append('search_in', field));
+        if (searchFields.length === 0) params.append('search_in', 'none');
         }
         publicationTypes.forEach((type) => params.append('pub_type', type));
         if (authorFilter.trim()) params.set('author', authorFilter.trim());
         if (subjectFilter.trim()) params.set('subject_area', subjectFilter.trim());
+        if (dateFrom) params.set('date_from', dateFrom);
+        if (dateTo) params.set('date_to', dateTo);
+        if (monthFilter) params.set('month', monthFilter);
         const query = params.toString();
         const res = await API.get(`publications/${query ? `?${query}` : ''}`);
         return Array.isArray(res.data) ? res.data : [];
-    }, [search, searchFields, publicationTypes, authorFilter, subjectFilter]);
+        }, [search, searchFields, publicationTypes, authorFilter, subjectFilter, dateFrom, dateTo, monthFilter]);
+
 
     const toggleValue = (value, setValues) => {
         setValues((current) => current.includes(value)
             ? current.filter((item) => item !== value)
             : [...current, value]);
+    };
+
+    const applyDatePreset = (preset) => {
+        const currentYear = new Date().getFullYear();
+        setDatePreset(preset);
+        if (preset === 'this_year') {
+            setDateFrom(`${currentYear}-01-01`);
+            setDateTo(`${currentYear}-12-31`);
+        } else if (preset === 'last_three_years') {
+            setDateFrom(`${currentYear - 2}-01-01`);
+            setDateTo(`${currentYear}-12-31`);
+        } else {
+            setDateFrom('');
+            setDateTo('');
+        }
+        setPublicationsLoading(true);
+        setPublicationsError('');
+    };
+
+    const togglePublicationHistory = async (publicationId) => {
+        if (expandedHistoryId === publicationId) {
+            setExpandedHistoryId(null);
+            return;
+        }
+
+        setExpandedHistoryId(publicationId);
+        setHistoryError('');
+        if (Object.hasOwn(publicationHistory, publicationId)) return;
+
+        setHistoryLoadingId(publicationId);
+        try {
+            const { data } = await API.get(`publications/${publicationId}/history/`);
+            setPublicationHistory((current) => ({
+                ...current,
+                [publicationId]: Array.isArray(data) ? data : [],
+            }));
+        } catch (err) {
+            console.error('Unable to load publication history:', err);
+            setHistoryError(getErrorMessage(err, 'Unable to load publication history.'));
+        } finally {
+            setHistoryLoadingId(null);
+        }
     };
 
     const refreshPublications = async () => {
@@ -167,6 +226,30 @@ export default function Publications({ user }) {
         nextParams.delete('action');
         setSearchParams(nextParams, { replace: true });
     }, [publications, publicationsLoading, searchParams, setSearchParams]);
+
+    const hasSearchFilters = Boolean(
+        search.trim() || publicationTypes.length || authorFilter.trim() || subjectFilter.trim()
+        || dateFrom || dateTo || monthFilter
+    );
+
+    const rankedSupervisors = supervisors.slice(0, 1);
+    const reviewInvitations = editingPublication?.review_invitations || [];
+    const noReviewersResponded = reviewInvitations.length > 0
+        && reviewInvitations.every((invitation) => invitation.status === 'INVITED');
+    const canChangeSupervisor = reviewInvitations.some(
+        (invitation) => invitation.role === 'SUPERVISOR'
+            && (invitation.status === 'DECLINED' || (invitation.status === 'INVITED' && noReviewersResponded))
+    );
+    const canChangeCoSupervisor = reviewInvitations.some(
+        (invitation) => invitation.role === 'CO_SUPERVISOR'
+            && (invitation.status === 'DECLINED' || (invitation.status === 'INVITED' && noReviewersResponded))
+    );
+    const supervisorInvitation = editingPublication?.review_invitations?.find(
+        (invitation) => invitation.role === 'SUPERVISOR'
+    );
+    const coSupervisorInvitation = editingPublication?.review_invitations?.find(
+        (invitation) => invitation.role === 'CO_SUPERVISOR'
+    );
 
     useEffect(() => {
         if (!canWrite) return;
@@ -335,6 +418,13 @@ export default function Publications({ user }) {
                 type: 'success',
                 message: `${editingId ? 'Publication changes saved successfully and resubmitted for review.' : 'Publication submitted successfully and is pending review.'}${reviewerAssignment}${response.data.notification_warning ? ` ${response.data.notification_warning}` : ''}`,
             });
+            if (editingId) {
+                setPublicationHistory((current) => {
+                    const next = { ...current };
+                    delete next[editingId];
+                    return next;
+                });
+            }
             clearForm();
             setShowSubmissionForm(false);
             await refreshPublications();
@@ -525,14 +615,79 @@ export default function Publications({ user }) {
                                     style={filterInputStyle}
                                 />
                             </label>
+                        <label htmlFor="date-from-filter" style={filterInputLabelStyle}>
+                            Published from
+                            <input
+                                id="date-from-filter"
+                                type="date"
+                                value={dateFrom}
+                                onChange={(event) => {
+                                    setDateFrom(event.target.value);
+                                    setDatePreset('');
+                                    setPublicationsLoading(true);
+                                    setPublicationsError('');
+                                }}
+                                style={filterInputStyle}
+                            />
+                        </label>
+                        <label htmlFor="date-to-filter" style={filterInputLabelStyle}>
+                            Published to
+                            <input
+                                id="date-to-filter"
+                                type="date"
+                                value={dateTo}
+                                onChange={(event) => {
+                                    setDateTo(event.target.value);
+                                    setDatePreset('');
+                                    setPublicationsLoading(true);
+                                    setPublicationsError('');
+                                }}
+                                style={filterInputStyle}
+                            />
+                        </label>
+                        <label htmlFor="month-filter" style={filterInputLabelStyle}>
+                            Month
+                            <select
+                                id="month-filter"
+                                value={monthFilter}
+                                onChange={(event) => {
+                                    setMonthFilter(event.target.value);
+                                    setPublicationsLoading(true);
+                                    setPublicationsError('');
+                                }}
+                                style={filterInputStyle}
+                            >
+                                <option value="">All months</option>
+                                {['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'].map((month, index) => (
+                                    <option key={month} value={index + 1}>{month}</option>
+                                ))}
+                            </select>
+                        </label>
+                        <label htmlFor="date-preset-filter" style={filterInputLabelStyle}>
+                            Quick range
+                            <select
+                                id="date-preset-filter"
+                                value={datePreset}
+                                onChange={(event) => applyDatePreset(event.target.value)}
+                                style={filterInputStyle}
+                            >
+                                <option value="">Custom / all dates</option>
+                                <option value="this_year">This year</option>
+                                <option value="last_three_years">Last 3 years</option>
+                            </select>
+                        </label>
                         </div>
-                        {(search || authorFilter || subjectFilter || publicationTypes.length > 0 || searchFields.length !== 4) && (
+                        {(search || authorFilter || subjectFilter || dateFrom || dateTo || monthFilter || publicationTypes.length > 0 || searchFields.length !== 4) && (
                             <button type="button" onClick={() => {
                                 setSearch('');
                                 setSearchFields(['title', 'abstract', 'author', 'subject_area']);
                                 setPublicationTypes([]);
                                 setAuthorFilter('');
                                 setSubjectFilter('');
+                                setDateFrom('');
+                                setDateTo('');
+                                setMonthFilter('');
+                                setDatePreset('');
                                 setPublicationsLoading(true);
                                 setPublicationsError('');
                             }} style={{ justifySelf: 'start', padding: 0, border: 0, background: 'transparent', color: '#0369a1', textDecoration: 'underline', cursor: 'pointer', font: 'inherit', fontSize: '.82rem' }}>
@@ -655,6 +810,16 @@ export default function Publications({ user }) {
                                     {pub.is_owner && (
                                         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '8px' }}>
                                             <div style={{ display: 'flex', gap: '8px' }}>
+                                                <button
+                                                    type="button"
+                                                    title="View publication change history"
+                                                    aria-label={`View change history for ${pub.title}`}
+                                                    aria-expanded={expandedHistoryId === pub.id}
+                                                    onClick={() => togglePublicationHistory(pub.id)}
+                                                    style={iconButtonStyle}
+                                                >
+                                                    <History size={17} aria-hidden="true" />
+                                                </button>
                                                 {!pub.is_approved && pub.review_status !== 'APPROVED' && (
                                                     <>
                                                         <button title="Edit publication" aria-label="Edit publication" onClick={() => startEditing(pub)} style={iconButtonStyle}><Pencil size={17} aria-hidden="true" /></button>
@@ -677,6 +842,40 @@ export default function Publications({ user }) {
                                     )}
                                     </div>
                                 </div>
+                                {pub.is_owner && expandedHistoryId === pub.id && (
+                                    <section aria-label={`Change history for ${pub.title}`} style={{ marginTop: '14px', paddingTop: '12px', borderTop: '1px solid #e2e8f0' }}>
+                                        <h4 style={{ margin: '0 0 10px', color: '#334155', fontSize: '.9rem' }}>Change history</h4>
+                                        {historyLoadingId === pub.id ? (
+                                            <p role="status" style={{ margin: 0, color: '#64748b', fontSize: '.84rem' }}>Loading history…</p>
+                                        ) : historyError ? (
+                                            <p role="alert" style={{ margin: 0, color: '#b91c1c', fontSize: '.84rem' }}>{historyError}</p>
+                                        ) : publicationHistory[pub.id]?.length ? (
+                                            <ol style={{ display: 'grid', gap: '8px', margin: 0, paddingLeft: '22px' }}>
+                                                {publicationHistory[pub.id].map((version) => (
+                                                    <li key={version.id} style={{ color: '#475569', fontSize: '.84rem' }}>
+                                                        <details>
+                                                            <summary style={{ cursor: 'pointer', color: '#334155', fontWeight: 600 }}>
+                                                                Version {version.version_number} · archived {new Date(version.created_at).toLocaleString()} by {version.changed_by}
+                                                            </summary>
+                                                            <div style={{ marginTop: '8px', padding: '10px 12px', background: '#f8fafc', borderRadius: '5px', lineHeight: 1.5, overflowWrap: 'anywhere' }}>
+                                                                <p style={{ margin: '0 0 5px' }}><strong>Title:</strong> {version.snapshot.title}</p>
+                                                                <p style={{ margin: '0 0 5px' }}><strong>Type:</strong> {version.snapshot.pub_type} · <strong>Subject:</strong> {version.snapshot.subject_area}</p>
+                                                                <p style={{ margin: '0 0 5px' }}><strong>Authors:</strong> {version.snapshot.authors.map((author) => author.name).join('; ') || 'None listed'}</p>
+                                                                <p style={{ margin: '0 0 5px' }}><strong>Reviewers:</strong> {version.snapshot.reviewers.map((reviewer) => `${reviewer.name} (${reviewer.role})`).join('; ') || 'None assigned'}</p>
+                                                                <p style={{ margin: '0 0 5px', whiteSpace: 'pre-wrap' }}><strong>Abstract:</strong> {version.snapshot.abstract}</p>
+                                                                {version.snapshot.file_attachment_url && (
+                                                                    <a href={version.snapshot.file_attachment_url} target="_blank" rel="noreferrer" style={{ color: '#0369a1' }}>View previous manuscript</a>
+                                                                )}
+                                                            </div>
+                                                        </details>
+                                                    </li>
+                                                ))}
+                                            </ol>
+                                        ) : (
+                                            <p style={{ margin: 0, color: '#64748b', fontSize: '.84rem' }}>No previous versions have been recorded yet. Future edits will appear here.</p>
+                                        )}
+                                    </section>
+                                )}
                                 {pub.is_owner && pub.review_feedback && (
                                     <div role="note" style={{ marginTop: '12px', padding: '11px 13px', borderLeft: '3px solid #c2410c', background: '#fff7ed', color: '#7c2d12', fontSize: '0.84rem', lineHeight: 1.5 }}>
                                         <strong>Supervisor feedback:</strong> {pub.review_feedback}

@@ -1,6 +1,8 @@
 from django.test import TestCase
 from django.urls import reverse
 from django.core.exceptions import ValidationError
+from datetime import datetime
+from django.utils import timezone
 from rest_framework import status
 from rest_framework.test import APITestCase
 from django.core.files.uploadedfile import SimpleUploadedFile
@@ -8,7 +10,7 @@ from django.contrib.auth.models import User
 from django.test import override_settings
 from rest_framework_simplejwt.tokens import AccessToken
 import re
-from .models import AuthorProfile, Publication, PublicationDeletionRequest, PublicationReviewInvitation, ReviewerSubjectArea, UserNotification, UserProfile, UniversityDirectoryEntry, BroadcastMessage
+from .models import AuthorProfile, Publication, PublicationDeletionRequest, PublicationReviewInvitation, PublicationVersion, ReviewerSubjectArea, UserNotification, UserProfile, UniversityDirectoryEntry, BroadcastMessage
 from .serializers import RepositoryTokenObtainPairSerializer
 
 class TokenClaimsTests(TestCase):
@@ -796,6 +798,56 @@ class PublicationTests(APITestCase):
         publication.refresh_from_db()
         self.assertEqual(publication.title, 'Approved paper')
 
+    def test_publication_edits_store_owner_only_change_history(self):
+        owner, _ = self.create_member('history-owner')
+        reviewer, _ = self.create_supervisor('history-reviewer')
+        author = AuthorProfile.objects.create(
+            first_name='Ada',
+            last_name='Lovelace',
+            institution='Analytical Society',
+        )
+        publication = self.create_review_publication(
+            owner,
+            reviewer,
+            title='Original version title',
+            abstract=self.valid_abstract,
+        )
+        publication.authors.add(author)
+        self.client.force_authenticate(user=owner)
+
+        first_update = self.client.patch(
+            reverse('publication-detail', args=[publication.id]),
+            {'title': 'Second version title'},
+            format='json',
+        )
+        self.assertEqual(first_update.status_code, status.HTTP_200_OK, first_update.data)
+        second_update = self.client.patch(
+            reverse('publication-detail', args=[publication.id]),
+            {'title': 'Current version title'},
+            format='json',
+        )
+        self.assertEqual(second_update.status_code, status.HTTP_200_OK, second_update.data)
+
+        history = self.client.get(reverse('publication-history', args=[publication.id]))
+        self.assertEqual(history.status_code, status.HTTP_200_OK)
+        self.assertEqual([version['version_number'] for version in history.data], [2, 1])
+        self.assertEqual(history.data[0]['snapshot']['title'], 'Second version title')
+        self.assertEqual(history.data[1]['snapshot']['title'], 'Original version title')
+        self.assertEqual(history.data[1]['snapshot']['authors'][0]['name'], 'Ada Lovelace')
+        self.assertEqual(history.data[1]['snapshot']['reviewers'][0]['name'], 'history-reviewer')
+        self.assertEqual(PublicationVersion.objects.filter(publication=publication).count(), 2)
+
+        publication.is_approved = True
+        publication.save()
+        other_user, _ = self.create_member('history-other-user')
+        self.client.force_authenticate(user=other_user)
+        denied = self.client.get(reverse('publication-history', args=[publication.id]))
+        self.assertEqual(denied.status_code, status.HTTP_403_FORBIDDEN)
+
+        self.client.force_authenticate(user=None)
+        guest_denied = self.client.get(reverse('publication-history', args=[publication.id]))
+        self.assertEqual(guest_denied.status_code, status.HTTP_403_FORBIDDEN)
+
     def test_guest_can_view_approved_publication_inline_without_incrementing_downloads(self):
         owner = User.objects.create_user(username='public-view-owner', password='test-password')
         publication = Publication.objects.create(
@@ -910,6 +962,47 @@ class PublicationTests(APITestCase):
             [('pub_type', 'CONFERENCE'), ('pub_type', 'JOURNAL'), ('author', 'Hopper'), ('subject_area', 'Computer')],
         )
         self.assertEqual({record['id'] for record in filtered.data}, {matching.id})
+
+    def test_publication_search_filters_date_range_and_month(self):
+        owner, _ = self.create_member('date-filter-owner')
+        publications = []
+        for title, submitted_at in [
+            ('Before range', datetime(2024, 1, 31)),
+            ('Range start', datetime(2024, 2, 1)),
+            ('Range end', datetime(2024, 3, 31)),
+            ('After range', datetime(2024, 4, 1)),
+        ]:
+            publication = Publication.objects.create(
+                title=title,
+                owner=owner,
+                abstract='A publication for date filter tests.',
+                pub_type='JOURNAL',
+                subject_area='Computer Science',
+                is_approved=True,
+            )
+            Publication.objects.filter(pk=publication.pk).update(
+                upload_date=timezone.make_aware(submitted_at),
+            )
+            publications.append(publication)
+        self.client.force_authenticate(user=owner)
+
+        date_range = self.client.get(
+            reverse('publication-list'),
+            {'date_from': '2024-02-01', 'date_to': '2024-03-31'},
+        )
+        self.assertEqual(
+            {record['id'] for record in date_range.data},
+            {publications[1].id, publications[2].id},
+        )
+
+        february = self.client.get(reverse('publication-list'), {'month': '2'})
+        self.assertEqual([record['id'] for record in february.data], [publications[1].id])
+
+        march_in_range = self.client.get(
+            reverse('publication-list'),
+            {'date_from': '2024-01-01', 'date_to': '2024-12-31', 'month': '3'},
+        )
+        self.assertEqual([record['id'] for record in march_in_range.data], [publications[2].id])
 
     def test_authenticated_repository_defaults_to_personal_items_and_searches_repository(self):
         member, _ = self.create_member('personal-repository-user')

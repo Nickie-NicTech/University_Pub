@@ -1,9 +1,12 @@
 import secrets
 import logging
+from datetime import date
 from smtplib import SMTPException
+from django.db import transaction
 from django.db.models import Q, F, Sum
 from django.conf import settings
 from django.core.mail import send_mail
+from django.core.files.storage import default_storage
 from django.utils import timezone
 from django.http import FileResponse
 from django.shortcuts import get_object_or_404
@@ -12,7 +15,7 @@ from rest_framework.decorators import action
 from rest_framework.views import APIView
 from rest_framework.exceptions import NotFound, PermissionDenied
 from rest_framework.response import Response
-from .models import Publication, PublicationReviewInvitation, ReviewerSubjectArea, ReviewerSubjectAreaExclusion, AuthorProfile, PublicationDeletionRequest, UserProfile, UserNotification, BroadcastMessage, UniversityDirectoryEntry
+from .models import Publication, PublicationVersion, PublicationReviewInvitation, ReviewerSubjectArea, ReviewerSubjectAreaExclusion, AuthorProfile, PublicationDeletionRequest, UserProfile, UserNotification, BroadcastMessage, UniversityDirectoryEntry
 from .serializers import PublicationSerializer, AuthorProfileSerializer, UserRegistrationSerializer, PublicationDeletionRequestSerializer, UserProfileSerializer, UserNotificationSerializer, BroadcastMessageSerializer, AdminUserSerializer, AdminUserCreateSerializer, UniversityDirectoryEntrySerializer, SupervisorSerializer, AdminSubjectMappingSerializer
 from .reviewer_matching import canonical_subject_area, rank_lecturers, subject_similarity
 import random
@@ -21,6 +24,14 @@ from rest_framework import generics, permissions
 from rest_framework_simplejwt.views import TokenObtainPairView
 from .serializers import RepositoryTokenObtainPairSerializer
 from rest_framework_simplejwt.tokens import RefreshToken
+from io import BytesIO
+from django.db.models import Q, F, Sum, Count
+from django.http import FileResponse, HttpResponse
+from reportlab.lib import colors
+from reportlab.lib.pagesizes import A4
+from reportlab.lib.styles import getSampleStyleSheet
+from reportlab.lib.units import cm
+from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
 logger = logging.getLogger(__name__)
 
@@ -118,7 +129,7 @@ class PublicationViewSet(viewsets.ModelViewSet):
     serializer_class = PublicationSerializer
 
     def get_queryset(self):
-        queryset = Publication.objects.all().order_by('upload_date')
+        queryset = Publication.objects.all().order_by('upload_date', 'id')
         queryset = queryset.prefetch_related('review_invitations__reviewer', 'authors')
         user = self.request.user
         highlight_mode = (
@@ -147,9 +158,9 @@ class PublicationViewSet(viewsets.ModelViewSet):
                 'title': Q(title__icontains=search_query),
                 'abstract': Q(abstract__icontains=search_query),
                 'subject_area': Q(subject_area__icontains=search_query),
-                'author':author_name_q(search_query),
+                'author': author_name_q(search_query),
             }
-        
+
             requested_fields = self.request.query_params.getlist('search_in')
             search_fields = set(requested_fields) if requested_fields else set(supported_fields)
             search_filter = Q()
@@ -169,11 +180,43 @@ class PublicationViewSet(viewsets.ModelViewSet):
         if subject_area:
             queryset = queryset.filter(subject_area__icontains=subject_area)
 
+        # Filter by submission year (upload_date does not change on edits)
+        year_param = self.request.query_params.get('year', '').strip()
+        if year_param.isdigit():
+            queryset = queryset.filter(upload_date__year=int(year_param))
+
+        date_from_param = self.request.query_params.get('date_from', '').strip()
+        try:
+            date_from = date.fromisoformat(date_from_param) if date_from_param else None
+        except ValueError:
+            date_from = None
+        if date_from:
+            queryset = queryset.filter(upload_date__date__gte=date_from)
+
+        date_to_param = self.request.query_params.get('date_to', '').strip()
+        try:
+            date_to = date.fromisoformat(date_to_param) if date_to_param else None
+        except ValueError:
+            date_to = None
+        if date_to:
+            queryset = queryset.filter(upload_date__date__lte=date_to)
+
+        month_param = self.request.query_params.get('month', '').strip()
+        month = int(month_param) if month_param.isdigit() else None
+        if month and 1 <= month <= 12:
+            queryset = queryset.filter(upload_date__month=month)
+        else:
+            month = None
+
         has_search_filters = bool(
             search_query
             or publication_types
             or author_query
             or subject_area
+            or year_param.isdigit()
+            or date_from
+            or date_to
+            or month
         )
         if (
             self.action == 'list'
@@ -183,7 +226,13 @@ class PublicationViewSet(viewsets.ModelViewSet):
             and not review_assignment_mode
         ):
             queryset = queryset.filter(owner=user)
+
+        # Highlights show the newest items first; everything else is oldest at the top
+        if highlight_mode:
+            queryset = queryset.order_by('-upload_date', '-id')
+
         return queryset
+
 
     def perform_update(self, serializer):
         publication = self.get_object()
@@ -197,7 +246,35 @@ class PublicationViewSet(viewsets.ModelViewSet):
             publication.review_invitations.filter(status='INVITED').values_list('reviewer_id', flat=True)
         )
         resubmitting = publication.review_status == 'REVISION_REQUESTED'
-        publication = serializer.save(is_approved=False, review_feedback='')
+        latest_version = publication.versions.order_by('-version_number').values_list(
+            'version_number', flat=True,
+        ).first() or 0
+        snapshot = {
+            'title': publication.title,
+            'abstract': publication.abstract,
+            'pub_type': publication.pub_type,
+            'subject_area': publication.subject_area,
+            'authors': [
+                {'name': str(author), 'institution': author.institution}
+                for author in publication.authors.all()
+            ],
+            'reviewers': [
+                {
+                    'role': invitation.get_role_display(),
+                    'name': invitation.reviewer.get_full_name() or invitation.reviewer.username,
+                }
+                for invitation in publication.review_invitations.select_related('reviewer')
+            ],
+            'file_attachment': publication.file_attachment.name if publication.file_attachment else '',
+        }
+        with transaction.atomic():
+            PublicationVersion.objects.create(
+                publication=publication,
+                version_number=latest_version + 1,
+                changed_by=self.request.user,
+                snapshot=snapshot,
+            )
+            publication = serializer.save(is_approved=False, review_feedback='')
         accepted = publication.review_invitations.filter(status='ACCEPTED')
         if resubmitting:
             accepted.update(decision='PENDING', feedback='')
@@ -260,6 +337,36 @@ class PublicationViewSet(viewsets.ModelViewSet):
             {'detail': 'Permanent deletion is disabled. Owners may submit a deletion request.'},
             status=status.HTTP_405_METHOD_NOT_ALLOWED,
         )
+
+    @action(detail=True, methods=['get'], url_path='history')
+    def history(self, request, pk=None):
+        publication = self.get_object()
+        if (
+            not request.user.is_authenticated
+            or (publication.owner_id != request.user.id and not request.user.is_staff)
+        ):
+            raise PermissionDenied('Only the publication owner may view its change history.')
+
+        versions = publication.versions.select_related('changed_by').all()
+        history = []
+        for version in versions:
+            snapshot = version.snapshot.copy()
+            attachment = snapshot.get('file_attachment')
+            snapshot['file_attachment_url'] = (
+                request.build_absolute_uri(default_storage.url(attachment))
+                if attachment else ''
+            )
+            history.append({
+                'id': version.id,
+                'version_number': version.version_number,
+                'created_at': version.created_at,
+                'changed_by': (
+                    version.changed_by.get_full_name() or version.changed_by.username
+                    if version.changed_by else 'Former user'
+                ),
+                'snapshot': snapshot,
+            })
+        return Response(history)
 
     @action(detail=True, methods=['get'], url_path='download')
     def download(self, request, pk=None):
@@ -570,7 +677,131 @@ class AdminSubjectMappingDetailView(generics.DestroyAPIView):
                 mapping.delete()
 
 
+# class AdminAnalyticsView(APIView):
+
+#replacement for admin analytics view
+
+def build_admin_summary():
+    publications = Publication.objects.all()
+    total = publications.count()
+    approved = publications.filter(is_approved=True).count()
+
+    role_counts = dict(
+        UserProfile.objects.filter(user__is_staff=False)
+        .order_by()
+        .values_list('role')
+        .annotate(total=Count('id'))
+    )
+    users_by_role = [
+        {'role': value, 'label': label, 'count': role_counts.get(value, 0)}
+        for value, label in UserProfile.ROLE_CHOICES
+        if value != 'ADMIN'
+    ]
+
+    type_rows = {
+        row['pub_type']: row
+        for row in publications.order_by().values('pub_type').annotate(
+            total=Count('id'),
+            approved=Count('id', filter=Q(is_approved=True)),
+        )
+    }
+    publications_by_type = []
+    for value, label in Publication.PUBLICATION_TYPES:
+        row = type_rows.get(value, {})
+        type_total = row.get('total', 0)
+        type_approved = row.get('approved', 0)
+        publications_by_type.append({
+            'type': value,
+            'label': label,
+            'total': type_total,
+            'approved': type_approved,
+            'not_approved': type_total - type_approved,
+        })
+
+    return {
+        'users': User.objects.filter(is_staff=False).count(),
+        'supervisors': UserProfile.objects.filter(role='LECTURER').count(),
+        'publications': total,
+        'approved_publications': approved,
+        'not_approved_publications': total - approved,
+        'pending_publications': publications.filter(
+            review_status__in=['PENDING_INVITATIONS', 'PENDING', 'REVISION_REQUESTED']
+        ).count(),
+        'downloads': publications.aggregate(total=Sum('download_count'))['total'] or 0,
+        'users_by_role': users_by_role,
+        'publications_by_type': publications_by_type,
+    }
+
+
 class AdminAnalyticsView(APIView):
+    permission_classes = [permissions.IsAdminUser]
+
+    def get(self, request):
+        return Response(build_admin_summary())
+
+
+class AdminAnalyticsPdfView(APIView):
+    permission_classes = [permissions.IsAdminUser]
+
+    def get(self, request):
+        summary = build_admin_summary()
+        styles = getSampleStyleSheet()
+        buffer = BytesIO()
+        document = SimpleDocTemplate(
+            buffer, pagesize=A4, title='UNIPUB System Summary',
+            leftMargin=2 * cm, rightMargin=2 * cm, topMargin=2 * cm, bottomMargin=2 * cm,
+        )
+
+        def make_table(rows):
+            table = Table(rows, hAlign='LEFT', repeatRows=1)
+            table.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1e293b')),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+                ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+                ('FONTNAME', (0, -1), (-1, -1), 'Helvetica-Bold'),
+                ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#cbd5e1')),
+                ('ROWBACKGROUNDS', (0, 1), (-1, -2), [colors.white, colors.HexColor('#f1f5f9')]),
+                ('ALIGN', (1, 0), (-1, -1), 'RIGHT'),
+                ('TOPPADDING', (0, 0), (-1, -1), 6),
+                ('BOTTOMPADDING', (0, 0), (-1, -1), 6),
+            ]))
+            return table
+
+        user_rows = [['User type', 'Accounts']]
+        user_rows += [[item['label'], item['count']] for item in summary['users_by_role']]
+        user_rows.append(['All registered users', summary['users']])
+
+        publication_rows = [['Publication type', 'Total', 'Approved', 'Not yet approved']]
+        publication_rows += [
+            [item['label'], item['total'], item['approved'], item['not_approved']]
+            for item in summary['publications_by_type']
+        ]
+        publication_rows.append([
+            'All publications', summary['publications'],
+            summary['approved_publications'], summary['not_approved_publications'],
+        ])
+
+        story = [
+            Paragraph('UNIPUB System Summary', styles['Title']),
+            Paragraph(f"Generated {timezone.localtime():%d %B %Y, %H:%M}", styles['Normal']),
+            Spacer(1, 18),
+            Paragraph('Users', styles['Heading2']),
+            make_table(user_rows),
+            Spacer(1, 18),
+            Paragraph('Publications', styles['Heading2']),
+            make_table(publication_rows),
+            Spacer(1, 18),
+            Paragraph('Activity', styles['Heading2']),
+            Paragraph(f"Total downloads across all publications: {summary['downloads']}", styles['Normal']),
+        ]
+        document.build(story)
+
+        response = HttpResponse(buffer.getvalue(), content_type='application/pdf')
+        response['Content-Disposition'] = (
+            f'attachment; filename="unipub-summary-{timezone.localdate():%Y-%m-%d}.pdf"'
+        )
+        return response
+    
     permission_classes = [permissions.IsAdminUser]
 
     def get(self, request):
