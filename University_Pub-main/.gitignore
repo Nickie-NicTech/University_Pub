@@ -1,0 +1,22 @@
+# Python environments and generated files
+BACKEND/.venv/
+BACKEND/**/__pycache__/
+BACKEND/**/*.py[cod]
+BACKEND/*.log
+BACKEND/db.sqlite3
+BACKEND/media/
+
+# Local secrets and environment configuration
+.env
+.env.*
+!.env.example
+BACKEND/.env
+
+# Frontend dependencies and generated bundles
+frontend/node_modules/
+frontend/dist/
+
+# Local editor files
+.vscode/*
+!.vscode/extensions.json
+*.code-workspace
