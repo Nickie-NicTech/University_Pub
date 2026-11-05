@@ -166,3 +166,6 @@ EMAIL_USE_TLS = os.environ.get('EMAIL_USE_TLS', 'true').lower() == 'true'
 EMAIL_USE_SSL = os.environ.get('EMAIL_USE_SSL', 'false').lower() == 'true'
 EMAIL_TIMEOUT = int(os.environ.get('EMAIL_TIMEOUT', '10'))
 DEFAULT_FROM_EMAIL = os.environ.get('DEFAULT_FROM_EMAIL', EMAIL_HOST_USER or 'UNIPUB <noreply@localhost>')
+APPS_SCRIPT_MAIL_ENDPOINT = os.environ.get('APPS_SCRIPT_MAIL_ENDPOINT', '')
+APPS_SCRIPT_MAIL_API_KEY = os.environ.get('APPS_SCRIPT_MAIL_API_KEY', '')
+APPS_SCRIPT_MAIL_TIMEOUT = int(os.environ.get('APPS_SCRIPT_MAIL_TIMEOUT', '20'))
