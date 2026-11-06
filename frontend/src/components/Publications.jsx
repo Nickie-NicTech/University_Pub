@@ -80,6 +80,7 @@ export default function Publications({ user, profileActivity }) {
         || subject !== editingPublication.subject_area
         || selectedAuthorIds !== originalAuthorIds
         || Boolean(file);
+    const isSingleAuthorType = ['THESIS', 'DISSERTATION'].includes(pubType);
 
     // Restrictions configuration boundary parameters
     const canWrite = user && ['STUDENT', 'LECTURER'].includes(user.role);
@@ -326,6 +327,11 @@ export default function Publications({ user, profileActivity }) {
     }, [showAuthorModal, authorSearch]);
 
     const toggleAuthor = (author) => {
+        const isSelected = selectedAuthors.some((item) => item.id === author.id);
+        if (isSingleAuthorType && !isSelected && selectedAuthors.length >= 1) {
+            setAuthorFeedback({ type: 'error', message: 'Theses and dissertations can have only one author. Remove the selected author to choose another.' });
+            return;
+        }
         setSelectedAuthors((current) => current.some((item) => item.id === author.id)
             ? current.filter((item) => item.id !== author.id)
             : [...current, author]);
@@ -366,6 +372,10 @@ export default function Publications({ user, profileActivity }) {
 
     const handleCreateAuthor = async (event) => {
         event.preventDefault();
+        if (isSingleAuthorType && selectedAuthors.length >= 1) {
+            setAuthorFeedback({ type: 'error', message: 'Theses and dissertations can have only one author. Remove the selected author before adding another.' });
+            return;
+        }
         setAuthorSaving(true);
         setAuthorFeedback(null);
         const firstName = authorDraft.first_name.trim();
@@ -1050,6 +1060,7 @@ export default function Publications({ user, profileActivity }) {
                             </button>
                         </div>
                         {selectedAuthors.length > 0 && <p style={{ margin: '-8px 0 0', color: '#475569', fontSize: '0.8rem' }}>Authors: {selectedAuthors.map((author) => author.name || `${author.first_name} ${author.last_name}`).join('; ')}</p>}
+                        {isSingleAuthorType && <p style={{ margin: '-8px 0 0', color: '#0369a1', fontSize: '.8rem' }}>Theses and dissertations can have one author only.</p>}
                         <div>
                             <label htmlFor="publication-subject" style={labelStyle}>
                                 Subject Area (required)
@@ -1146,7 +1157,20 @@ export default function Publications({ user, profileActivity }) {
                         </div>
                         <div>
                             <label htmlFor="publication-type" style={labelStyle}>Publication Type (required)</label>
-                            <select id="publication-type" value={pubType} onChange={e => setPubType(e.target.value)} required style={formInputStyle}>
+                            <select
+                                id="publication-type"
+                                value={pubType}
+                                onChange={(event) => {
+                                    const nextType = event.target.value;
+                                    setPubType(nextType);
+                                    if (['THESIS', 'DISSERTATION'].includes(nextType) && selectedAuthors.length > 1) {
+                                        setSelectedAuthors((current) => current.slice(0, 1));
+                                        setActionFeedback({ type: 'success', message: 'Theses and dissertations allow one author. Additional authors were removed.' });
+                                    }
+                                }}
+                                required
+                                style={formInputStyle}
+                            >
                                 {user.role === 'STUDENT' ? (<><option value="THESIS">Thesis</option> <option value="DISSERTATION">Dissertation</option></>) :  (<><option value="JOURNAL">Journal</option> <option value="CONFERENCE">Conference Paper</option></>) }
 
                             </select>
@@ -1216,6 +1240,7 @@ export default function Publications({ user, profileActivity }) {
                         <div>
                             <h2 id="author-modal-title" style={{ margin: 0, fontSize: '1.15rem', color: '#1e293b' }}>Publication authors</h2>
                             <p style={{ margin: '4px 0 0', color: '#64748b', fontSize: '0.82rem' }}>{selectedAuthors.length} selected for this record</p>
+                            {isSingleAuthorType && <p style={{ margin: '4px 0 0', color: '#0369a1', fontSize: '.8rem' }}>Theses and dissertations can have one author only.</p>}
                         </div>
                         <button type="button" title="Close author dialog" aria-label="Close author dialog" onClick={() => setShowAuthorModal(false)} style={iconButtonStyle}><X size={18} /></button>
                     </header>

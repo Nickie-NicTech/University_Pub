@@ -151,6 +151,22 @@ class PublicationSerializer(serializers.ModelSerializer):
 
         if self.initial_data.get('co_supervisor') == '':
             attrs['co_supervisor'] = None
+        publication_type = attrs.get(
+            'pub_type',
+            self.instance.pub_type if self.instance else None,
+        )
+        authors = attrs.get('authors')
+        if authors is None and self.instance:
+            authors = self.instance.authors.all()
+        if (
+            publication_type in {'THESIS', 'DISSERTATION'}
+            and authors is not None
+            and len(authors) != 1
+        ):
+            raise serializers.ValidationError({
+                'authors': 'Theses and dissertations must have exactly one author.'
+            })
+
         request = self.context.get('request')
         supervisor = attrs.get('supervisor')
         co_supervisor = attrs.get('co_supervisor')

@@ -1481,6 +1481,49 @@ class PublicationTests(APITestCase):
         publication = Publication.objects.get(title='Collaborative paper')
         self.assertEqual(list(publication.authors.all()), [author])
 
+    def test_thesis_and_dissertation_reject_multiple_authors(self):
+        reviewer, supervisor = self.create_supervisor('single-author-supervisor')
+        user, _ = self.create_member('single-author-owner', supervisor)
+        self.assign_predefined_reviewer(user, reviewer)
+        self.client.force_authenticate(user=user)
+        authors = [
+            AuthorProfile.objects.create(first_name='Ada', last_name='Lovelace'),
+            AuthorProfile.objects.create(first_name='Grace', last_name='Hopper'),
+        ]
+
+        for publication_type in ('THESIS', 'DISSERTATION'):
+            response = self.client.post(
+                reverse('publication-list'),
+                {
+                    'title': f'{publication_type.title()} with co-authors',
+                    'abstract': self.valid_abstract,
+                    'pub_type': publication_type,
+                    'subject_area': 'Computer Science',
+                    'authors': [author.id for author in authors],
+                    'supervisor': supervisor.user_id,
+                    'file_attachment': self.manuscript_upload(),
+                },
+                format='multipart',
+            )
+            self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+            self.assertIn('authors', response.data)
+
+            single_author_response = self.client.post(
+                reverse('publication-list'),
+                {
+                    'title': f'{publication_type.title()} with one author',
+                    'abstract': self.valid_abstract,
+                    'pub_type': publication_type,
+                    'subject_area': 'Computer Science',
+                    'authors': [authors[0].id],
+                    'supervisor': supervisor.user_id,
+                    'file_attachment': self.manuscript_upload(),
+                },
+                format='multipart',
+            )
+            self.assertEqual(single_author_response.status_code, status.HTTP_201_CREATED, single_author_response.data)
+            self.assertEqual(len(single_author_response.data['authors_details']), 1)
+
     def test_login_access_token_authorizes_publication_upload(self):
         reviewer, supervisor = self.create_supervisor('token-supervisor')
         user, _ = self.create_member('token-student', supervisor)
