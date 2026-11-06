@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { Flame, UserRoundPlus, Search, X, Check, Pencil, Trash2, Download, Eye, Plus, LoaderCircle, SlidersHorizontal, History, BookOpenCheck, BarChart3, MessageSquareText, CircleX, Clock3 } from 'lucide-react';
+import { Flame, UserRoundPlus, Search, X, Check, Pencil, Trash2, Download, Eye, Plus, LoaderCircle, SlidersHorizontal, History, BookOpenCheck, BarChart3, MessageSquareText, Clock3 } from 'lucide-react';
 import API from '../api';
 
 export default function Publications({ user, profileActivity }) {
@@ -89,7 +89,7 @@ export default function Publications({ user, profileActivity }) {
         APPROVED: 'approved',
         PENDING: 'pending review',
         REVISION_REQUESTED: 'feedback',
-        REVIEWER_DECLINED: 'rejected',
+        DELETE_REQUEST: 'eligible for deletion request',
     };
     const hasSearchFilters = Boolean(
         search.trim()
@@ -102,11 +102,16 @@ export default function Publications({ user, profileActivity }) {
         || monthFilter
         || activityStatusFilter
     );
-    const visiblePublications = activityStatusFilter
-        ? publications.filter((publication) => activityStatusFilter === 'APPROVED'
-            ? publication.is_approved || publication.review_status === 'APPROVED'
-            : publication.review_status === activityStatusFilter)
-        : publications;
+    const visiblePublications = activityStatusFilter === 'DELETE_REQUEST'
+        ? publications.filter((publication) => publication.is_owner
+            && !publication.is_approved
+            && publication.review_status !== 'APPROVED'
+            && !publication.has_pending_deletion_request)
+        : activityStatusFilter
+            ? publications.filter((publication) => activityStatusFilter === 'APPROVED'
+                ? publication.is_approved || publication.review_status === 'APPROVED'
+                : publication.review_status === activityStatusFilter)
+            : publications;
     const fetchPublications = useCallback(async () => {
         const params = new URLSearchParams();
         if (search.trim()) {
@@ -577,9 +582,8 @@ export default function Publications({ user, profileActivity }) {
                                         { label: 'Approved', value: profileActivity.approved_materials, icon: <BarChart3 size={17} />, filter: 'APPROVED' },
                                         { label: 'Pending review', value: profileActivity.pending_review_materials, icon: <Clock3 size={17} />, filter: 'PENDING' },
                                         { label: 'Feedback', value: profileActivity.feedback_materials, icon: <MessageSquareText size={17} />, filter: 'REVISION_REQUESTED' },
-                                        { label: 'Rejected', value: profileActivity.rejected_materials, icon: <CircleX size={17} />, filter: 'REVIEWER_DECLINED' },
                                         { label: 'Downloads', value: profileActivity.total_downloads, icon: <Download size={17} /> },
-                                        { label: 'Delete requests', value: profileActivity.pending_deletion_requests, icon: <X size={17} /> },
+                                        { label: 'Delete requests', value: profileActivity.pending_deletion_requests, icon: <Trash2 size={17} />, filter: 'DELETE_REQUEST' },
                                     ].map(({ label, value, icon, filter }) => {
                                         const content = <>
                                             <span style={{ display: 'grid', placeItems: 'center', color: '#0369a1' }}>{icon}</span>
@@ -611,7 +615,7 @@ export default function Publications({ user, profileActivity }) {
                                                 type="button"
                                                 onClick={() => filterByActivity(filter)}
                                                 aria-pressed={selected}
-                                                title={`Show ${label.toLowerCase()} publications`}
+                                                title={filter === 'DELETE_REQUEST' ? 'Find publications available for a deletion request' : `Show ${label.toLowerCase()} publications`}
                                                 style={{ ...tileStyle, cursor: 'pointer' }}
                                             >
                                                 {content}
@@ -844,7 +848,9 @@ export default function Publications({ user, profileActivity }) {
                             : publicationsError
                                 ? publicationsError
                                 : activityStatusFilter
-                                    ? `Showing ${visiblePublications.length} ${activityStatusLabels[activityStatusFilter]} publication${visiblePublications.length === 1 ? '' : 's'}.`
+                                    ? activityStatusFilter === 'DELETE_REQUEST'
+                                        ? `Showing ${visiblePublications.length} publication${visiblePublications.length === 1 ? '' : 's'} eligible for a deletion request.`
+                                        : `Showing ${visiblePublications.length} ${activityStatusLabels[activityStatusFilter]} publication${visiblePublications.length === 1 ? '' : 's'}.`
                                     : user && !hasSearchFilters
                                     ? `Showing your ${publications.length} personal publication${publications.length === 1 ? '' : 's'}. Search or apply a filter to browse the repository.`
                                         : `Showing ${visiblePublications.length} result${visiblePublications.length === 1 ? '' : 's'}${search.trim() ? ` for “${search.trim()}”` : ''}.`}
@@ -859,7 +865,9 @@ export default function Publications({ user, profileActivity }) {
                     <div id="publication-results" style={{ display: 'flex', flexDirection: 'column', gap: '16px', scrollMarginTop: '16px' }}>
                         {!publicationsLoading && !publicationsError && visiblePublications.length === 0 && (
                             <p style={{ margin: 0, padding: '20px', border: '1px solid #e2e8f0', borderRadius: '8px', background: '#fff', color: '#64748b', textAlign: 'center' }}>
-                                {activityStatusFilter
+                                {activityStatusFilter === 'DELETE_REQUEST'
+                                    ? 'No publications are currently eligible for a deletion request.'
+                                    : activityStatusFilter
                                     ? `There are no ${activityStatusLabels[activityStatusFilter]} publications in your repository.`
                                     : hasSearchFilters
                                     ? 'No publications match these search filters. Try changing or clearing your filters.'
@@ -943,7 +951,11 @@ export default function Publications({ user, profileActivity }) {
                                                 {!pub.is_approved && pub.review_status !== 'APPROVED' && (
                                                     <>
                                                         <button title="Edit publication" aria-label="Edit publication" onClick={() => startEditing(pub)} style={iconButtonStyle}><Pencil size={17} aria-hidden="true" /></button>
-                                                        <button type="button" title="Request publication deletion" aria-label="Request publication deletion" disabled={pendingAction === `delete-${pub.id}`} onClick={() => handleDeletionRequest(pub)} style={{ ...iconButtonStyle, color: '#b91c1c', cursor: pendingAction === `delete-${pub.id}` ? 'wait' : 'pointer' }}>{pendingAction === `delete-${pub.id}` ? <LoaderCircle size={17} className="publication-spinner" aria-hidden="true" /> : <Trash2 size={17} aria-hidden="true" />}</button>
+                                                        {pub.has_pending_deletion_request ? (
+                                                            <span role="status" style={{ alignSelf: 'center', color: '#9a3412', fontSize: '.76rem' }}>Deletion request pending</span>
+                                                        ) : (
+                                                            <button type="button" title="Request publication deletion" aria-label="Request publication deletion" disabled={pendingAction === `delete-${pub.id}`} onClick={() => handleDeletionRequest(pub)} style={{ ...iconButtonStyle, color: '#b91c1c', cursor: pendingAction === `delete-${pub.id}` ? 'wait' : 'pointer' }}>{pendingAction === `delete-${pub.id}` ? <LoaderCircle size={17} className="publication-spinner" aria-hidden="true" /> : <Trash2 size={17} aria-hidden="true" />}</button>
+                                                        )}
                                                     </>
                                                 )}
                                             </div>

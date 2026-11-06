@@ -895,14 +895,6 @@ class PublicationTests(APITestCase):
             subject_area='Computer Science',
             review_status='PENDING',
         )
-        Publication.objects.create(
-            title='Reviewer declined',
-            owner=user,
-            abstract='Abstract',
-            pub_type='JOURNAL',
-            subject_area='Computer Science',
-            review_status='REVIEWER_DECLINED',
-        )
         PublicationDeletionRequest.objects.create(publication=publication, requested_by=user)
 
         response = self.client.get(reverse('current_user_profile'))
@@ -910,11 +902,10 @@ class PublicationTests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data['first_name'], 'Ari')
         self.assertEqual(response.data['role'], profile.role)
-        self.assertEqual(response.data['uploaded_materials'], 4)
+        self.assertEqual(response.data['uploaded_materials'], 3)
         self.assertEqual(response.data['approved_materials'], 1)
         self.assertEqual(response.data['pending_review_materials'], 1)
         self.assertEqual(response.data['feedback_materials'], 1)
-        self.assertEqual(response.data['rejected_materials'], 1)
         self.assertEqual(response.data['total_downloads'], 4)
         self.assertEqual(response.data['pending_deletion_requests'], 1)
 
@@ -930,6 +921,8 @@ class PublicationTests(APITestCase):
             format='multipart',
         )
         publication_id = create_response.data['id']
+        before_request = self.client.get(reverse('publication-detail', args=[publication_id]))
+        self.assertFalse(before_request.data['has_pending_deletion_request'])
         owner_update = self.client.patch(
             reverse('publication-detail', args=[publication_id]),
             {'title': 'Updated by owner'},
@@ -1433,6 +1426,8 @@ class PublicationTests(APITestCase):
 
         self.assertEqual(accepted.status_code, status.HTTP_201_CREATED, accepted.data)
         self.assertEqual(PublicationDeletionRequest.objects.get().requested_by, owner)
+        after_request = self.client.get(reverse('publication-detail', args=[publication_id]))
+        self.assertTrue(after_request.data['has_pending_deletion_request'])
 
     def test_author_can_be_created_with_details_and_searched(self):
         user = User.objects.create_user(username='author-manager', password='test-password')

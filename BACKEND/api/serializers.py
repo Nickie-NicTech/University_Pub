@@ -29,7 +29,6 @@ class UserProfileSerializer(serializers.ModelSerializer):
     approved_materials = serializers.SerializerMethodField()
     pending_review_materials = serializers.SerializerMethodField()
     feedback_materials = serializers.SerializerMethodField()
-    rejected_materials = serializers.SerializerMethodField()
     total_downloads = serializers.SerializerMethodField()
     pending_deletion_requests = serializers.SerializerMethodField()
 
@@ -38,12 +37,12 @@ class UserProfileSerializer(serializers.ModelSerializer):
         fields = [
             'username', 'first_name', 'last_name', 'email', 'role', 'department', 'skillset',
             'profile_picture', 'uploaded_materials', 'approved_materials',
-            'pending_review_materials', 'feedback_materials', 'rejected_materials', 'total_downloads',
+            'pending_review_materials', 'feedback_materials', 'total_downloads',
             'pending_deletion_requests',
         ]
         read_only_fields = [
             'role', 'uploaded_materials', 'approved_materials', 'pending_review_materials',
-            'feedback_materials', 'rejected_materials', 'total_downloads',
+            'feedback_materials', 'total_downloads',
             'pending_deletion_requests',
         ]
 
@@ -74,9 +73,6 @@ class UserProfileSerializer(serializers.ModelSerializer):
 
     def get_feedback_materials(self, profile):
         return profile.user.owned_publications.filter(review_status='REVISION_REQUESTED').count()
-
-    def get_rejected_materials(self, profile):
-        return profile.user.owned_publications.filter(review_status='REVIEWER_DECLINED').count()
 
     def get_total_downloads(self, profile):
         return profile.user.owned_publications.aggregate(total=Sum('download_count'))['total'] or 0
@@ -126,11 +122,15 @@ class PublicationSerializer(serializers.ModelSerializer):
     is_owner = serializers.SerializerMethodField()
     is_reviewer = serializers.SerializerMethodField()
     is_invited_reviewer = serializers.SerializerMethodField()
+    has_pending_deletion_request = serializers.SerializerMethodField()
 
     class Meta:
         model = Publication
-        fields = ['id', 'title', 'abstract', 'pub_type', 'subject_area', 'authors', 'authors_details', 'supervisor', 'co_supervisor', 'supervisor_id', 'co_supervisor_id', 'supervisor_name', 'co_supervisor_name', 'review_invitations', 'review_invitation_status', 'my_review_decision', 'file_attachment', 'download_count', 'upload_date', 'is_approved', 'review_status', 'review_feedback', 'owner_username', 'is_owner', 'is_reviewer', 'is_invited_reviewer']
-        read_only_fields = ['supervisor_id', 'co_supervisor_id', 'download_count', 'is_approved', 'review_status', 'review_feedback', 'supervisor_name', 'co_supervisor_name', 'review_invitations', 'review_invitation_status', 'my_review_decision', 'owner_username', 'is_owner', 'is_reviewer', 'is_invited_reviewer', 'upload_date']
+        fields = ['id', 'title', 'abstract', 'pub_type', 'subject_area', 'authors', 'authors_details', 'supervisor', 'co_supervisor', 'supervisor_id', 'co_supervisor_id', 'supervisor_name', 'co_supervisor_name', 'review_invitations', 'review_invitation_status', 'my_review_decision', 'file_attachment', 'download_count', 'upload_date', 'is_approved', 'review_status', 'review_feedback', 'owner_username', 'is_owner', 'is_reviewer', 'is_invited_reviewer', 'has_pending_deletion_request']
+        read_only_fields = ['supervisor_id', 'co_supervisor_id', 'download_count', 'is_approved', 'review_status', 'review_feedback', 'supervisor_name', 'co_supervisor_name', 'review_invitations', 'review_invitation_status', 'my_review_decision', 'owner_username', 'is_owner', 'is_reviewer', 'is_invited_reviewer', 'has_pending_deletion_request', 'upload_date']
+
+    def get_has_pending_deletion_request(self, obj):
+        return obj.deletion_requests.filter(status='PENDING').exists()
 
     def validate(self, attrs):
         uploaded_file = attrs.get('file_attachment')
