@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { Flame, UserRoundPlus, Search, X, Check, Pencil, Trash2, Download, Eye, Plus, LoaderCircle, SlidersHorizontal, History, BookOpenCheck, BarChart3 } from 'lucide-react';
+import { Flame, UserRoundPlus, Search, X, Check, Pencil, Trash2, Download, Eye, Plus, LoaderCircle, SlidersHorizontal, History, BookOpenCheck, BarChart3, MessageSquareText, CircleX, Clock3 } from 'lucide-react';
 import API from '../api';
 
 export default function Publications({ user, profileActivity }) {
@@ -59,6 +59,7 @@ export default function Publications({ user, profileActivity }) {
     const [dateTo, setDateTo] = useState('');
     const [monthFilter, setMonthFilter] = useState('');
     const [datePreset, setDatePreset] = useState('');
+    const [activityStatusFilter, setActivityStatusFilter] = useState('');
     const [expandedHistoryId, setExpandedHistoryId] = useState(null);
     const [publicationHistory, setPublicationHistory] = useState({});
     const [historyLoadingId, setHistoryLoadingId] = useState(null);
@@ -67,6 +68,12 @@ export default function Publications({ user, profileActivity }) {
     // Restrictions configuration boundary parameters
     const canWrite = user && ['STUDENT', 'LECTURER'].includes(user.role);
     const latestHighlights = highlights.slice(0, 3);
+    const activityStatusLabels = {
+        APPROVED: 'approved',
+        PENDING: 'pending review',
+        REVISION_REQUESTED: 'feedback',
+        REVIEWER_DECLINED: 'rejected',
+    };
     const hasSearchFilters = Boolean(
         search.trim()
         || authorFilter.trim()
@@ -76,7 +83,13 @@ export default function Publications({ user, profileActivity }) {
         || dateFrom
         || dateTo
         || monthFilter
+        || activityStatusFilter
     );
+    const visiblePublications = activityStatusFilter
+        ? publications.filter((publication) => activityStatusFilter === 'APPROVED'
+            ? publication.is_approved || publication.review_status === 'APPROVED'
+            : publication.review_status === activityStatusFilter)
+        : publications;
     const fetchPublications = useCallback(async () => {
         const params = new URLSearchParams();
         if (search.trim()) {
@@ -117,6 +130,22 @@ export default function Publications({ user, profileActivity }) {
         }
         setPublicationsLoading(true);
         setPublicationsError('');
+    };
+
+    const filterByActivity = (status) => {
+        setActivityStatusFilter(status === 'ALL' ? '' : status);
+        setSearch('');
+        setSearchFields(['title', 'abstract', 'author', 'subject_area']);
+        setPublicationTypes([]);
+        setAuthorFilter('');
+        setSubjectFilter('');
+        setDateFrom('');
+        setDateTo('');
+        setMonthFilter('');
+        setDatePreset('');
+        setPublicationsLoading(true);
+        setPublicationsError('');
+        document.getElementById('publication-results')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     };
 
     const togglePublicationHistory = async (publicationId) => {
@@ -514,19 +543,53 @@ export default function Publications({ user, profileActivity }) {
                                 <h3 style={{ margin: 0, color: '#64748b', fontSize: '.72rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.05em' }}>Your repository activity</h3>
                                 <div style={{ display: 'flex', gap: '9px', overflowX: 'auto', paddingBottom: '2px' }}>
                                     {[
-                                        { label: 'Uploaded', value: profileActivity.uploaded_materials, icon: <BookOpenCheck size={17} /> },
-                                        { label: 'Approved', value: profileActivity.approved_materials, icon: <BarChart3 size={17} /> },
+                                        { label: 'Uploaded', value: profileActivity.uploaded_materials, icon: <BookOpenCheck size={17} />, filter: 'ALL' },
+                                        { label: 'Approved', value: profileActivity.approved_materials, icon: <BarChart3 size={17} />, filter: 'APPROVED' },
+                                        { label: 'Pending review', value: profileActivity.pending_review_materials, icon: <Clock3 size={17} />, filter: 'PENDING' },
+                                        { label: 'Feedback', value: profileActivity.feedback_materials, icon: <MessageSquareText size={17} />, filter: 'REVISION_REQUESTED' },
+                                        { label: 'Rejected', value: profileActivity.rejected_materials, icon: <CircleX size={17} />, filter: 'REVIEWER_DECLINED' },
                                         { label: 'Downloads', value: profileActivity.total_downloads, icon: <Download size={17} /> },
                                         { label: 'Delete requests', value: profileActivity.pending_deletion_requests, icon: <X size={17} /> },
-                                    ].map(({ label, value, icon }) => (
-                                        <div key={label} style={{ minWidth: '140px', flex: '1 0 0', display: 'flex', alignItems: 'center', gap: '9px', padding: '10px 12px', border: '1px solid #e2e8f0', borderRadius: '6px', background: '#f8fafc', boxSizing: 'border-box' }}>
+                                    ].map(({ label, value, icon, filter }) => {
+                                        const content = <>
                                             <span style={{ display: 'grid', placeItems: 'center', color: '#0369a1' }}>{icon}</span>
                                             <span style={{ display: 'grid', gap: '2px' }}>
                                                 <strong style={{ color: '#1e293b', fontSize: '.92rem', lineHeight: 1.1 }}>{value ?? 0}</strong>
                                                 <span style={{ color: '#64748b', fontSize: '.7rem', whiteSpace: 'nowrap' }}>{label}</span>
                                             </span>
-                                        </div>
-                                    ))}
+                                        </>;
+                                        const selected = filter === 'ALL'
+                                            ? !activityStatusFilter
+                                            : filter === activityStatusFilter;
+                                        const tileStyle = {
+                                            minWidth: '140px',
+                                            flex: '1 0 0',
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            gap: '9px',
+                                            padding: '10px 12px',
+                                            border: `1px solid ${filter && selected ? '#0284c7' : '#e2e8f0'}`,
+                                            borderRadius: '6px',
+                                            background: filter && selected ? '#eff6ff' : '#f8fafc',
+                                            boxSizing: 'border-box',
+                                            textAlign: 'left',
+                                            font: 'inherit',
+                                        };
+                                        return filter ? (
+                                            <button
+                                                key={label}
+                                                type="button"
+                                                onClick={() => filterByActivity(filter)}
+                                                aria-pressed={selected}
+                                                title={`Show ${label.toLowerCase()} publications`}
+                                                style={{ ...tileStyle, cursor: 'pointer' }}
+                                            >
+                                                {content}
+                                            </button>
+                                        ) : (
+                                            <div key={label} style={tileStyle}>{content}</div>
+                                        );
+                                    })}
                                 </div>
                             </section>
                         )}
@@ -750,9 +813,11 @@ export default function Publications({ user, profileActivity }) {
                             ? <span style={{ display: 'inline-flex', alignItems: 'center', gap: '7px' }}><LoaderCircle size={15} className="publication-spinner" aria-hidden="true" /> Loading publications…</span>
                             : publicationsError
                                 ? publicationsError
-                                : user && !hasSearchFilters
+                                : activityStatusFilter
+                                    ? `Showing ${visiblePublications.length} ${activityStatusLabels[activityStatusFilter]} publication${visiblePublications.length === 1 ? '' : 's'}.`
+                                    : user && !hasSearchFilters
                                     ? `Showing your ${publications.length} personal publication${publications.length === 1 ? '' : 's'}. Search or apply a filter to browse the repository.`
-                                    : `Showing ${publications.length} result${publications.length === 1 ? '' : 's'}${search.trim() ? ` for “${search.trim()}”` : ''}.`}
+                                        : `Showing ${visiblePublications.length} result${visiblePublications.length === 1 ? '' : 's'}${search.trim() ? ` for “${search.trim()}”` : ''}.`}
                     </p>
     
             {actionFeedback && (
@@ -761,17 +826,19 @@ export default function Publications({ user, profileActivity }) {
                         </p>
                     )}
                     {/* Timeline Loop */}
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-                        {!publicationsLoading && !publicationsError && publications.length === 0 && (
+                    <div id="publication-results" style={{ display: 'flex', flexDirection: 'column', gap: '16px', scrollMarginTop: '16px' }}>
+                        {!publicationsLoading && !publicationsError && visiblePublications.length === 0 && (
                             <p style={{ margin: 0, padding: '20px', border: '1px solid #e2e8f0', borderRadius: '8px', background: '#fff', color: '#64748b', textAlign: 'center' }}>
-                                {hasSearchFilters
+                                {activityStatusFilter
+                                    ? `There are no ${activityStatusLabels[activityStatusFilter]} publications in your repository.`
+                                    : hasSearchFilters
                                     ? 'No publications match these search filters. Try changing or clearing your filters.'
                                     : user
                                         ? 'Your personal repository is empty. Search or apply a filter to browse available repository publications.'
                                         : 'No publications are available yet.'}
                             </p>
                         )}
-                        {publications && publications.map(pub => (
+                        {visiblePublications.map(pub => (
                             <article id={`publication-${pub.id}`} key={pub.id} style={{
                                 backgroundColor: '#fff', padding: '20px', borderRadius: '8px',
                                 border: '1px solid #e2e8f0', boxShadow: '0 1px 3px rgba(0,0,0,0.04)'

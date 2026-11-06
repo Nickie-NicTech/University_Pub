@@ -879,6 +879,30 @@ class PublicationTests(APITestCase):
             download_count=4,
             is_approved=True,
         )
+        Publication.objects.create(
+            title='Needs revisions',
+            owner=user,
+            abstract='Abstract',
+            pub_type='JOURNAL',
+            subject_area='Computer Science',
+            review_status='REVISION_REQUESTED',
+        )
+        Publication.objects.create(
+            title='Under review',
+            owner=user,
+            abstract='Abstract',
+            pub_type='JOURNAL',
+            subject_area='Computer Science',
+            review_status='PENDING',
+        )
+        Publication.objects.create(
+            title='Reviewer declined',
+            owner=user,
+            abstract='Abstract',
+            pub_type='JOURNAL',
+            subject_area='Computer Science',
+            review_status='REVIEWER_DECLINED',
+        )
         PublicationDeletionRequest.objects.create(publication=publication, requested_by=user)
 
         response = self.client.get(reverse('current_user_profile'))
@@ -886,8 +910,11 @@ class PublicationTests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data['first_name'], 'Ari')
         self.assertEqual(response.data['role'], profile.role)
-        self.assertEqual(response.data['uploaded_materials'], 1)
+        self.assertEqual(response.data['uploaded_materials'], 4)
         self.assertEqual(response.data['approved_materials'], 1)
+        self.assertEqual(response.data['pending_review_materials'], 1)
+        self.assertEqual(response.data['feedback_materials'], 1)
+        self.assertEqual(response.data['rejected_materials'], 1)
         self.assertEqual(response.data['total_downloads'], 4)
         self.assertEqual(response.data['pending_deletion_requests'], 1)
 

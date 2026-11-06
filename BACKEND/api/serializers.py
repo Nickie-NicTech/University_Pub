@@ -27,6 +27,9 @@ class UserProfileSerializer(serializers.ModelSerializer):
     email = serializers.EmailField(source='user.email', required=False, allow_blank=True)
     uploaded_materials = serializers.SerializerMethodField()
     approved_materials = serializers.SerializerMethodField()
+    pending_review_materials = serializers.SerializerMethodField()
+    feedback_materials = serializers.SerializerMethodField()
+    rejected_materials = serializers.SerializerMethodField()
     total_downloads = serializers.SerializerMethodField()
     pending_deletion_requests = serializers.SerializerMethodField()
 
@@ -35,9 +38,14 @@ class UserProfileSerializer(serializers.ModelSerializer):
         fields = [
             'username', 'first_name', 'last_name', 'email', 'role', 'department', 'skillset',
             'profile_picture', 'uploaded_materials', 'approved_materials',
-            'total_downloads', 'pending_deletion_requests',
+            'pending_review_materials', 'feedback_materials', 'rejected_materials', 'total_downloads',
+            'pending_deletion_requests',
         ]
-        read_only_fields = ['role', 'uploaded_materials', 'approved_materials', 'total_downloads', 'pending_deletion_requests']
+        read_only_fields = [
+            'role', 'uploaded_materials', 'approved_materials', 'pending_review_materials',
+            'feedback_materials', 'rejected_materials', 'total_downloads',
+            'pending_deletion_requests',
+        ]
 
     def validate_profile_picture(self, picture):
         allowed_types = {'image/jpeg', 'image/png', 'image/webp', 'image/gif'}
@@ -60,6 +68,15 @@ class UserProfileSerializer(serializers.ModelSerializer):
 
     def get_approved_materials(self, profile):
         return profile.user.owned_publications.filter(is_approved=True).count()
+
+    def get_pending_review_materials(self, profile):
+        return profile.user.owned_publications.filter(review_status='PENDING').count()
+
+    def get_feedback_materials(self, profile):
+        return profile.user.owned_publications.filter(review_status='REVISION_REQUESTED').count()
+
+    def get_rejected_materials(self, profile):
+        return profile.user.owned_publications.filter(review_status='REVIEWER_DECLINED').count()
 
     def get_total_downloads(self, profile):
         return profile.user.owned_publications.aggregate(total=Sum('download_count'))['total'] or 0

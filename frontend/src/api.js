@@ -3,7 +3,7 @@ import axios from 'axios';
 const API = axios.create({
     baseURL: import.meta.env.VITE_API_BASE_URL
         || (import.meta.env.DEV
-            ? 'http://localhost:8000/api/'
+            ? '/api/'
             : 'https://backend-production-bf00a.up.railway.app/api/'),
 });
 
