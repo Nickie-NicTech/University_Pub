@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { Flame, UserRoundPlus, Search, X, Check, Pencil, Trash2, Download, Eye, Plus, LoaderCircle, SlidersHorizontal, History } from 'lucide-react';
+import { Flame, UserRoundPlus, Search, X, Check, Pencil, Trash2, Download, Eye, Plus, LoaderCircle, SlidersHorizontal, History, BookOpenCheck, BarChart3 } from 'lucide-react';
 import API from '../api';
 
-export default function Publications({ user }) {
+export default function Publications({ user, profileActivity }) {
     const [searchParams, setSearchParams] = useSearchParams();
     const [publications, setPublications] = useState([]);
     const [highlights, setHighlights] = useState([]);
@@ -68,11 +68,14 @@ export default function Publications({ user }) {
     const canWrite = user && ['STUDENT', 'LECTURER'].includes(user.role);
     const latestHighlights = highlights.slice(0, 3);
     const hasSearchFilters = Boolean(
-    search.trim() ||
-    authorFilter.trim() ||
-    subjectFilter.trim() ||
-    publicationTypes.length > 0 ||
-    searchFields.length !== 4
+        search.trim()
+        || authorFilter.trim()
+        || subjectFilter.trim()
+        || publicationTypes.length > 0
+        || searchFields.length !== 4
+        || dateFrom
+        || dateTo
+        || monthFilter
     );
     const fetchPublications = useCallback(async () => {
         const params = new URLSearchParams();
@@ -226,11 +229,6 @@ export default function Publications({ user }) {
         nextParams.delete('action');
         setSearchParams(nextParams, { replace: true });
     }, [publications, publicationsLoading, searchParams, setSearchParams]);
-
-    const hasSearchFilters = Boolean(
-        search.trim() || publicationTypes.length || authorFilter.trim() || subjectFilter.trim()
-        || dateFrom || dateTo || monthFilter
-    );
 
     const rankedSupervisors = supervisors.slice(0, 1);
     const reviewInvitations = editingPublication?.review_invitations || [];
@@ -429,7 +427,11 @@ export default function Publications({ user }) {
             setShowSubmissionForm(false);
             await refreshPublications();
         } catch (err) {
-            console.error('Unable to save publication:', err);
+            console.error('Unable to save publication:', {
+                status: err.response?.status,
+                response: err.response?.data,
+                error: err.message,
+            });
             setActionFeedback({ type: 'error', message: getErrorMessage(err, 'Publication could not be saved. Please try again.') });
         } finally {
             setPublicationSaving(false);
@@ -507,6 +509,27 @@ export default function Publications({ user }) {
                                 </button>
                             )}
                         </div>
+                        {user && profileActivity && (
+                            <section aria-label="Your repository activity" style={{ display: 'grid', gap: '8px' }}>
+                                <h3 style={{ margin: 0, color: '#64748b', fontSize: '.72rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.05em' }}>Your repository activity</h3>
+                                <div style={{ display: 'flex', gap: '9px', overflowX: 'auto', paddingBottom: '2px' }}>
+                                    {[
+                                        { label: 'Uploaded', value: profileActivity.uploaded_materials, icon: <BookOpenCheck size={17} /> },
+                                        { label: 'Approved', value: profileActivity.approved_materials, icon: <BarChart3 size={17} /> },
+                                        { label: 'Downloads', value: profileActivity.total_downloads, icon: <Download size={17} /> },
+                                        { label: 'Delete requests', value: profileActivity.pending_deletion_requests, icon: <X size={17} /> },
+                                    ].map(({ label, value, icon }) => (
+                                        <div key={label} style={{ minWidth: '140px', flex: '1 0 0', display: 'flex', alignItems: 'center', gap: '9px', padding: '10px 12px', border: '1px solid #e2e8f0', borderRadius: '6px', background: '#f8fafc', boxSizing: 'border-box' }}>
+                                            <span style={{ display: 'grid', placeItems: 'center', color: '#0369a1' }}>{icon}</span>
+                                            <span style={{ display: 'grid', gap: '2px' }}>
+                                                <strong style={{ color: '#1e293b', fontSize: '.92rem', lineHeight: 1.1 }}>{value ?? 0}</strong>
+                                                <span style={{ color: '#64748b', fontSize: '.7rem', whiteSpace: 'nowrap' }}>{label}</span>
+                                            </span>
+                                        </div>
+                                    ))}
+                                </div>
+                            </section>
+                        )}
                         <label htmlFor="publication-search" style={{ display: 'flex', alignItems: 'center', gap: '7px', color: '#334155', fontSize: '.88rem', fontWeight: 700 }}>
                             <Search size={16} aria-hidden="true" /> Search the repository
                         </label>
@@ -833,14 +856,14 @@ export default function Publications({ user }) {
                                                 {pub.review_invitations.map((invitation) => (
                                                     <div key={invitation.id} style={{ marginTop: '4px' }}>
                                                         {invitation.reviewer_name} ({invitation.role === 'CO_SUPERVISOR' ? 'co-supervisor' : 'supervisor'}: {invitation.status.toLowerCase().replace('_', ' ')}{invitation.status === 'ACCEPTED' ? `, ${invitation.decision.toLowerCase().replace('_', ' ')}` : ''})
-                                                        {invitation.feedback && <div style={{ margin: '3px 0 5px 8px', whiteSpace: 'pre-wrap' }}>Feedback: {invitation.feedback}</div>}
+                                                       
                                                     </div>
                                                 ))}
                                             </div>
                                         )}
                                         </div>
                                     )}
-                                    </div>
+                                    </div> 
                                 </div>
                                 {pub.is_owner && expandedHistoryId === pub.id && (
                                     <section aria-label={`Change history for ${pub.title}`} style={{ marginTop: '14px', paddingTop: '12px', borderTop: '1px solid #e2e8f0' }}>
@@ -901,6 +924,11 @@ export default function Publications({ user }) {
                              
                             <button type="button" title="Close form" aria-label="Close publication form" onClick={() => setShowSubmissionForm(false)} style={iconButtonStyle}><X size={18} /></button>
                         </div>
+                        {actionFeedback && (
+                            <p role={actionFeedback.type === 'error' ? 'alert' : 'status'} style={feedbackStyle(actionFeedback.type)}>
+                                {actionFeedback.message}
+                            </p>
+                        )}
              
                         <form onSubmit={handleSave} style={{ display: 'flex', minHeight: 0, flexDirection: 'column', gap: '16px', overflowY: 'auto', overscrollBehavior: 'contain', padding: '2px' }}>
                         

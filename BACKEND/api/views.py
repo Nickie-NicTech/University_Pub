@@ -818,7 +818,7 @@ class AdminUniversityDirectoryView(APIView):
     permission_classes = [permissions.IsAdminUser]
 
     def get(self, request):
-        entries = UniversityDirectoryEntry.objects.select_related('claimed_by').all()
+        entries = UniversityDirectoryEntry.objects.select_related('claimed_by', 'assigned_reviewer').all()
         person_type = request.query_params.get('person_type')
         if person_type in {'STUDENT', 'LECTURER'}:
             entries = entries.filter(person_type=person_type)
@@ -878,6 +878,39 @@ class AdminUniversityDirectoryView(APIView):
             )
             created.append(entry)
         return Response(UniversityDirectoryEntrySerializer(created, many=True).data, status=status.HTTP_201_CREATED)
+
+
+class AdminUniversityDirectoryAssignmentView(APIView):
+    permission_classes = [permissions.IsAdminUser]
+
+    def patch(self, request, pk):
+        entry = get_object_or_404(UniversityDirectoryEntry, pk=pk)
+        if entry.person_type != 'STUDENT':
+            return Response(
+                {'student': ['Only student directory records can be assigned a lecturer.']},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        reviewer_id = request.data.get('assigned_reviewer')
+        if reviewer_id in (None, ''):
+            entry.assigned_reviewer = None
+        else:
+            try:
+                reviewer = UniversityDirectoryEntry.objects.get(
+                    pk=reviewer_id,
+                    person_type='LECTURER',
+                    is_active=True,
+                )
+            except (UniversityDirectoryEntry.DoesNotExist, TypeError, ValueError):
+                return Response(
+                    {'assigned_reviewer': ['Choose an active lecturer from the university directory.']},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            entry.assigned_reviewer = reviewer
+
+        entry.save(update_fields=['assigned_reviewer'])
+        entry = UniversityDirectoryEntry.objects.select_related('assigned_reviewer').get(pk=entry.pk)
+        return Response(UniversityDirectoryEntrySerializer(entry).data)
 
 
 class BroadcastMessageView(APIView):

@@ -205,9 +205,42 @@ class PublicationSerializer(serializers.ModelSerializer):
                 'You must be logged in to submit a publication.'
             )
 
+        profile = UserProfile.objects.filter(user=request.user).first()
+        if not profile:
+            raise serializers.ValidationError({
+                'supervisor': 'Your user profile could not be found.'
+            })
+
+        if profile.role == 'LECTURER':
+            ranked_lecturers = rank_lecturers(
+                subject_area,
+                UserProfile.objects.filter(
+                    role='LECTURER',
+                    user__is_active=True,
+                ).exclude(user=request.user).select_related('user'),
+            )
+            matching_lecturer = next(
+                (lecturer for lecturer in ranked_lecturers if lecturer.is_subject_match),
+                None,
+            )
+            if not matching_lecturer:
+                raise serializers.ValidationError({
+                    'supervisor': (
+                        'No lecturer matches this publication subject. '
+                        'Contact an administrator to configure lecturer expertise mappings.'
+                    )
+                })
+            return matching_lecturer.user, None
+
+        if profile.role != 'STUDENT':
+            raise serializers.ValidationError({
+                'supervisor': 'Only students and lecturers may submit publications.'
+            })
+
         directory_entry = UniversityDirectoryEntry.objects.filter(
             claimed_by=request.user,
             is_active=True,
+            person_type='STUDENT',
         ).select_related('assigned_reviewer__claimed_by').first()
 
         if not directory_entry:
@@ -312,11 +345,6 @@ class PublicationSerializer(serializers.ModelSerializer):
 
         publication = Publication.objects.create(owner=owner, **validated_data)
         publication.authors.set(authors)
-        mapping_subject_area = canonical_subject_area(publication.subject_area)
-        ReviewerSubjectArea.objects.get_or_create(
-            reviewer=supervisor,
-            subject_area=mapping_subject_area,
-        )
         PublicationReviewInvitation.objects.create(
             publication=publication,
             reviewer=supervisor,
@@ -539,14 +567,25 @@ class SupervisorSerializer(serializers.ModelSerializer):
 class UniversityDirectoryEntrySerializer(serializers.ModelSerializer):
     full_name = serializers.SerializerMethodField()
     claimed_username = serializers.CharField(source='claimed_by.username', read_only=True, default=None)
+    assigned_reviewer_id = serializers.IntegerField(read_only=True, allow_null=True)
+    assigned_reviewer_name = serializers.SerializerMethodField()
 
     class Meta:
         model = UniversityDirectoryEntry
-        fields = ['id', 'university_id', 'person_type', 'first_name', 'last_name', 'full_name', 'email', 'department', 'is_active', 'claimed_username', 'created_at']
+        fields = [
+            'id', 'university_id', 'person_type', 'first_name', 'last_name',
+            'full_name', 'email', 'department', 'is_active', 'claimed_username',
+            'assigned_reviewer_id', 'assigned_reviewer_name', 'created_at',
+        ]
         read_only_fields = fields
 
     def get_full_name(self, entry):
         return f'{entry.first_name} {entry.last_name}'.strip()
+
+    def get_assigned_reviewer_name(self, entry):
+        if not entry.assigned_reviewer_id:
+            return ''
+        return f'{entry.assigned_reviewer.first_name} {entry.assigned_reviewer.last_name}'.strip()
 
 
 class AdminSubjectMappingSerializer(serializers.ModelSerializer):

@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { BarChart3, BookOpenCheck, ChevronLeft, ChevronRight, Download, ImagePlus, LoaderCircle, Save, UserRound, X } from 'lucide-react';
+import { ImagePlus, LoaderCircle, Save, UserRound } from 'lucide-react';
 import API from '../api';
 
 const emptyProfile = {
@@ -17,7 +17,7 @@ const emptyProfile = {
     pending_deletion_requests: 0,
 };
 
-export default function AccountSidebar({ username }) {
+export default function AccountSidebar({ username, onActivityChange }) {
     const [collapsed, setCollapsed] = useState(true);
     const [profile, setProfile] = useState(emptyProfile);
     const [picture, setPicture] = useState(null);
@@ -28,10 +28,14 @@ export default function AccountSidebar({ username }) {
 
     useEffect(() => {
         API.get('users/me/')
-            .then(({ data }) => setProfile({ ...emptyProfile, ...data }))
+            .then(({ data }) => {
+                const nextProfile = { ...emptyProfile, ...data };
+                setProfile(nextProfile);
+                onActivityChange?.(nextProfile);
+            })
             .catch((error) => setMessage(error.response?.data?.detail || 'Unable to load profile.'))
             .finally(() => setLoading(false));
-    }, []);
+    }, [onActivityChange]);
 
     useEffect(() => {
         if (!picture) {
@@ -56,7 +60,9 @@ export default function AccountSidebar({ username }) {
         if (picture) data.append('profile_picture', picture);
         try {
             const response = await API.patch('users/me/', data);
-            setProfile({ ...emptyProfile, ...response.data });
+            const nextProfile = { ...emptyProfile, ...response.data };
+            setProfile(nextProfile);
+            onActivityChange?.(nextProfile);
             setPicture(null);
             setMessage('Profile saved.');
         } catch (error) {
@@ -70,16 +76,11 @@ export default function AccountSidebar({ username }) {
     const imageSrc = previewUrl || profile.profile_picture;
 
     return (
-        <aside style={{ ...sidebarStyle, width: collapsed ? '60px' : 'min(304px, calc(100vw - 24px))' }} aria-label="Account profile">
-            <div style={sidebarHeaderStyle}>
-                <button type="button" title={collapsed ? 'Expand profile sidebar' : 'Collapse profile sidebar'} aria-label={collapsed ? 'Expand profile sidebar' : 'Collapse profile sidebar'} onClick={() => setCollapsed((value) => !value)} style={iconButtonStyle}>
-                    {collapsed ? <ChevronRight size={19} /> : <ChevronLeft size={19} />}
-                </button>
-                {!collapsed && <span style={{ fontWeight: 700, color: '#1e293b' }}>My profile</span>}
-            </div>
+        <aside style={{ ...sidebarStyle, ...(!collapsed && expandedSidebarStyle), width: collapsed ? '60px' : 'min(304px, calc(100vw - 24px))' }} aria-label="Account profile">
+            {!collapsed && <div style={sidebarHeaderStyle}><span style={{ fontWeight: 700, color: '#1e293b' }}>My profile</span></div>}
 
             {collapsed ? (
-                <button type="button" title={`Open ${profile.first_name || username || 'user'} profile`} aria-label="Expand profile sidebar" onClick={() => setCollapsed(false)} style={collapsedAvatarButtonStyle}>
+                <button type="button" title={`Open ${profile.first_name || username || 'user'} profile`} aria-label="Open profile" onClick={() => setCollapsed(false)} style={collapsedAvatarButtonStyle}>
                     {imageSrc ? <img src={imageSrc} alt="" style={avatarImageStyle} /> : <UserRound size={22} />}
                 </button>
             ) : (
@@ -88,7 +89,9 @@ export default function AccountSidebar({ username }) {
                         <>
                             <form onSubmit={saveProfile}>
                                 <div style={profilePhotoWrapStyle}>
-                                    {imageSrc ? <img src={imageSrc} alt="Profile" style={profilePhotoStyle} /> : <div style={profilePhotoPlaceholderStyle}><UserRound size={36} /></div>}
+                                    <button type="button" title="Close profile" aria-label="Close profile" onClick={() => setCollapsed(true)} style={profilePhotoButtonStyle}>
+                                        {imageSrc ? <img src={imageSrc} alt="" style={profilePhotoStyle} /> : <span style={profilePhotoPlaceholderStyle}><UserRound size={36} /></span>}
+                                    </button>
                                     <label title="Choose a profile picture" style={photoEditStyle}>
                                         <ImagePlus size={15} aria-hidden="true" />
                                         <input type="file" accept="image/png,image/jpeg,image/webp,image/gif" onChange={(event) => setPicture(event.target.files?.[0] || null)} style={{ display: 'none' }} />
@@ -114,13 +117,6 @@ export default function AccountSidebar({ username }) {
                                 </button>
                             </form>
 
-                            <div style={sectionHeadingStyle}>Repository activity</div>
-                            <div style={statsGridStyle}>
-                                <Stat icon={<BookOpenCheck size={16} />} label="Uploaded" value={profile.uploaded_materials} />
-                                <Stat icon={<BarChart3 size={16} />} label="Approved" value={profile.approved_materials} />
-                                <Stat icon={<Download size={16} />} label="Downloads" value={profile.total_downloads} />
-                                <Stat icon={<X size={16} />} label="Delete requests" value={profile.pending_deletion_requests} />
-                            </div>
                             {message && <p role="status" style={messageStyle}>{message}</p>}
                         </>
                     )}
@@ -130,17 +126,14 @@ export default function AccountSidebar({ username }) {
     );
 }
 
-function Stat({ icon, label, value }) {
-    return <div style={statStyle}><span style={{ color: '#0369a1' }}>{icon}</span><span style={statValueStyle}>{value}</span><span style={statLabelStyle}>{label}</span></div>;
-}
-
-const sidebarStyle = { position: 'absolute', inset: '0 auto 0 0', height: '100%', display: 'flex', flexDirection: 'column', background: '#fff', borderRight: '1px solid #dbe3ec', boxShadow: '4px 0 18px rgba(15, 23, 42, 0.12)', transition: 'width 180ms ease', overflow: 'hidden', boxSizing: 'border-box', zIndex: 15 };
+const sidebarStyle = { position: 'absolute', inset: '0 auto 0 0', height: '100%', display: 'flex', flexDirection: 'column', background: 'transparent', border: 0, boxShadow: 'none', transition: 'width 180ms ease', overflow: 'hidden', boxSizing: 'border-box', zIndex: 15, pointerEvents: 'none' };
+const expandedSidebarStyle = { background: '#fff', borderRight: '1px solid #dbe3ec', boxShadow: '4px 0 18px rgba(15, 23, 42, 0.12)', pointerEvents: 'auto' };
 const sidebarHeaderStyle = { minHeight: '54px', padding: '8px 10px', display: 'flex', alignItems: 'center', gap: '12px', borderBottom: '1px solid #e2e8f0', boxSizing: 'border-box' };
-const iconButtonStyle = { display: 'grid', placeItems: 'center', width: '36px', height: '36px', flex: '0 0 auto', border: '1px solid #dbe3ec', borderRadius: '5px', color: '#334155', background: '#fff', cursor: 'pointer' };
-const collapsedAvatarButtonStyle = { alignSelf: 'center', marginTop: '14px', display: 'grid', placeItems: 'center', width: '42px', height: '42px', border: '1px solid #dbe3ec', borderRadius: '50%', overflow: 'hidden', background: '#eff6ff', color: '#0369a1', cursor: 'pointer' };
+const collapsedAvatarButtonStyle = { alignSelf: 'flex-start', margin: '14px 0 0 9px', display: 'grid', placeItems: 'center', width: '42px', height: '42px', border: '1px solid #dbe3ec', borderRadius: '50%', overflow: 'hidden', background: '#eff6ff', color: '#0369a1', cursor: 'pointer', pointerEvents: 'auto' };
 const avatarImageStyle = { width: '100%', height: '100%', objectFit: 'cover' };
 const expandedContentStyle = { flex: 1, overflowY: 'auto', padding: '16px', minWidth: 0 };
 const profilePhotoWrapStyle = { position: 'relative', width: '76px', height: '76px', margin: '0 auto 8px' };
+const profilePhotoButtonStyle = { display: 'block', width: '76px', height: '76px', padding: 0, border: 0, borderRadius: '50%', background: 'transparent', cursor: 'pointer' };
 const profilePhotoStyle = { width: '76px', height: '76px', borderRadius: '50%', objectFit: 'cover', border: '2px solid #dbeafe' };
 const profilePhotoPlaceholderStyle = { width: '76px', height: '76px', display: 'grid', placeItems: 'center', borderRadius: '50%', color: '#0369a1', background: '#e0f2fe', border: '2px solid #dbeafe', boxSizing: 'border-box' };
 const photoEditStyle = { position: 'absolute', right: '-2px', bottom: '0', width: '28px', height: '28px', display: 'grid', placeItems: 'center', borderRadius: '50%', border: '2px solid #fff', background: '#0369a1', color: '#fff', cursor: 'pointer' };
@@ -150,8 +143,4 @@ const sectionHeadingStyle = { paddingTop: '14px', marginBottom: '9px', borderTop
 const labelStyle = { display: 'block', marginBottom: '9px', color: '#475569', fontSize: '0.75rem', fontWeight: 600 };
 const inputStyle = { width: '100%', display: 'block', marginTop: '4px', padding: '8px', border: '1px solid #cbd5e1', borderRadius: '4px', color: '#1e293b', background: '#fff', boxSizing: 'border-box', fontSize: '0.82rem' };
 const saveButtonStyle = { width: '100%', display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '7px', margin: '4px 0 14px', padding: '9px', border: 0, borderRadius: '4px', background: '#0369a1', color: '#fff', fontWeight: 600, cursor: 'pointer' };
-const statsGridStyle = { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '7px' };
-const statStyle = { minWidth: 0, display: 'grid', gridTemplateColumns: '20px 1fr', alignItems: 'center', columnGap: '5px', padding: '9px 7px', border: '1px solid #e2e8f0', borderRadius: '5px', background: '#f8fafc' };
-const statValueStyle = { color: '#1e293b', fontWeight: 700, fontSize: '0.9rem' };
-const statLabelStyle = { gridColumn: '1 / -1', overflow: 'hidden', color: '#64748b', fontSize: '0.67rem', textOverflow: 'ellipsis', whiteSpace: 'nowrap' };
 const messageStyle = { color: '#0369a1', fontSize: '0.78rem' };

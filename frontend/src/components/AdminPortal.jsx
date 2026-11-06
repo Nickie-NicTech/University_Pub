@@ -69,7 +69,7 @@ export default function AdminPortal({ onLogout }) {
                     {error && <div className="admin-alert" role="alert">{error}</div>}
                     {section === 'overview' && <Overview analytics={analytics} onManageUsers={() => setSection('users')} />}
                     {section === 'users' && <UserManagement users={users} onRefresh={refresh} />}
-                    {section === 'subject-mappings' && <SubjectMappings mappings={mappings} users={users} onRefresh={refresh} />}
+                    {section === 'subject-mappings' && <SubjectMappings mappings={mappings} users={users} directory={directory} onRefresh={refresh} />}
                     {section === 'broadcasts' && <Broadcasts messages={broadcasts} onRefresh={refresh} />}
                     {section === 'directory' && <UniversityDirectory entries={directory} onRefresh={refresh} />}
                 </div>
@@ -187,13 +187,20 @@ function UserManagement({ users, onRefresh }) {
     </>;
 }
 
-function SubjectMappings({ mappings, users, onRefresh }) {
+function SubjectMappings({ mappings, users, directory, onRefresh }) {
     const [subjectArea, setSubjectArea] = useState('');
     const [reviewerId, setReviewerId] = useState('');
+    const [studentEntryId, setStudentEntryId] = useState('');
+    const [directoryLecturerId, setDirectoryLecturerId] = useState('');
     const [error, setError] = useState('');
     const [busy, setBusy] = useState(false);
+    const [assignmentBusy, setAssignmentBusy] = useState(false);
     const [deletingId, setDeletingId] = useState(null);
+    const [clearingStudentId, setClearingStudentId] = useState(null);
     const lecturers = users.filter((user) => user.role === 'LECTURER' && user.is_active);
+    const studentEntries = directory.filter((entry) => entry.person_type === 'STUDENT' && entry.is_active);
+    const lecturerEntries = directory.filter((entry) => entry.person_type === 'LECTURER' && entry.is_active);
+    const studentMappings = directory.filter((entry) => entry.person_type === 'STUDENT' && entry.assigned_reviewer_id);
     const words = subjectArea.toLowerCase().match(/[a-z0-9]+/g) || [];
     const candidates = [...lecturers].sort((first, second) => {
         const score = (lecturer) => {
@@ -225,6 +232,40 @@ function SubjectMappings({ mappings, users, onRefresh }) {
         }
     };
 
+    const saveStudentMapping = async (event) => {
+        event.preventDefault();
+        setAssignmentBusy(true);
+        setError('');
+        try {
+            await API.patch(`admin/university-directory/${studentEntryId}/assignment/`, {
+                assigned_reviewer: Number(directoryLecturerId),
+            });
+            setStudentEntryId('');
+            setDirectoryLecturerId('');
+            await onRefresh();
+        } catch (requestError) {
+            const details = requestError.response?.data;
+            setError(details ? Object.values(details).flat().join(' ') : 'Unable to save student lecturer mapping.');
+        } finally {
+            setAssignmentBusy(false);
+        }
+    };
+
+    const clearStudentMapping = async (entry) => {
+        if (!window.confirm(`Remove the lecturer assignment for ${entry.full_name || entry.university_id}?`)) return;
+        setClearingStudentId(entry.id);
+        setError('');
+        try {
+            await API.patch(`admin/university-directory/${entry.id}/assignment/`, { assigned_reviewer: null });
+            await onRefresh();
+        } catch (requestError) {
+            const details = requestError.response?.data;
+            setError(details ? Object.values(details).flat().join(' ') : 'Unable to remove student lecturer mapping.');
+        } finally {
+            setClearingStudentId(null);
+        }
+    };
+
     const removeMapping = async (mapping) => {
         if (!window.confirm(`Remove ${mapping.reviewer_name} from ${mapping.subject_area}?`)) return;
         setDeletingId(mapping.id);
@@ -248,31 +289,67 @@ function SubjectMappings({ mappings, users, onRefresh }) {
     return <>
         <div className="admin-section-intro"><div><h2>Lecturer expertise</h2><p>Subject mappings are created from lecturer skills and departments when publications are submitted. Add explicit mappings here or remove a mapping to exclude that lecturer from automatic matching for the subject.</p></div></div>
         {error && <div className="admin-alert" role="alert">{error}</div>}
-        <form className="admin-panel admin-create-form" onSubmit={addMapping}>
-            <div className="admin-panel-heading"><div><span className="admin-panel-kicker">REVIEWER ROUTING</span><h2>Add subject mapping</h2></div></div>
-            <p className="admin-mapping-note">Suggestions are ranked by department and skills. Review and select a lecturer; profiles never create mappings automatically.</p>
-            <div className="admin-form-grid admin-mapping-form">
-                <label>Publication subject area<input value={subjectArea} onChange={(event) => { setSubjectArea(event.target.value); setReviewerId(''); }} maxLength={100} placeholder="e.g. Software Engineering" required /></label>
-                <label>Lecturer
-                    <select value={reviewerId} onChange={(event) => setReviewerId(event.target.value)} required>
-                        <option value="">Select a lecturer</option>
-                        {candidates.map((lecturer) => {
-                            const alreadyMapped = mappings.some((mapping) =>
-                                mapping.subject_area.toLowerCase() === subjectArea.trim().toLowerCase()
-                                && String(mapping.reviewer) === String(lecturer.user_id)
-                            );
-                            const expertise = [lecturer.department, lecturer.skillset].filter(Boolean).join(' · ');
-                            return <option key={lecturer.id} value={lecturer.user_id} disabled={alreadyMapped}>
-                                {lecturer.first_name || lecturer.last_name ? `${lecturer.first_name} ${lecturer.last_name}`.trim() : lecturer.username}
-                                {expertise ? ` — ${expertise}` : ''}
-                                {alreadyMapped ? ' (already mapped)' : ''}
-                            </option>;
-                        })}
-                    </select>
-                </label>
-            </div>
-            <button className="admin-primary compact" disabled={busy || !subjectArea.trim() || !reviewerId || matchingMapping}><Plus size={16} /> Add mapping</button>
-        </form>
+        <div className="admin-mapping-forms">
+            <form className="admin-panel admin-create-form" onSubmit={addMapping}>
+                <div className="admin-panel-heading"><div><span className="admin-panel-kicker">REVIEWER ROUTING</span><h2>Add subject mapping</h2></div></div>
+                <p className="admin-mapping-note">Map a lecturer to a publication specialty for reviewer recommendations.</p>
+                <div className="admin-form-grid admin-mapping-form">
+                    <label>Publication subject area<input value={subjectArea} onChange={(event) => { setSubjectArea(event.target.value); setReviewerId(''); }} maxLength={100} placeholder="e.g. Software Engineering" required /></label>
+                    <label>Lecturer
+                        <select value={reviewerId} onChange={(event) => setReviewerId(event.target.value)} required>
+                            <option value="">Select a lecturer</option>
+                            {candidates.map((lecturer) => {
+                                const alreadyMapped = mappings.some((mapping) =>
+                                    mapping.subject_area.toLowerCase() === subjectArea.trim().toLowerCase()
+                                    && String(mapping.reviewer) === String(lecturer.user_id)
+                                );
+                                const expertise = [lecturer.department, lecturer.skillset].filter(Boolean).join(' · ');
+                                return <option key={lecturer.id} value={lecturer.user_id} disabled={alreadyMapped}>
+                                    {lecturer.first_name || lecturer.last_name ? `${lecturer.first_name} ${lecturer.last_name}`.trim() : lecturer.username}
+                                    {expertise ? ` — ${expertise}` : ''}
+                                    {alreadyMapped ? ' (already mapped)' : ''}
+                                </option>;
+                            })}
+                        </select>
+                    </label>
+                </div>
+                <button className="admin-primary compact" disabled={busy || !subjectArea.trim() || !reviewerId || matchingMapping}><Plus size={16} /> Add mapping</button>
+            </form>
+            <form className="admin-panel admin-create-form" onSubmit={saveStudentMapping}>
+                <div className="admin-panel-heading"><div><span className="admin-panel-kicker">STUDENT SUPERVISOR ASSIGNMENT</span><h2>Assign lecturer to student</h2></div></div>
+                <p className="admin-mapping-note">Set the predefined supervisor used when this student submits a publication.</p>
+                <div className="admin-form-grid admin-mapping-form">
+                    <label>Student directory record
+                        <select value={studentEntryId} onChange={(event) => {
+                            setStudentEntryId(event.target.value);
+                            const student = studentEntries.find((entry) => String(entry.id) === event.target.value);
+                            setDirectoryLecturerId(student?.assigned_reviewer_id ? String(student.assigned_reviewer_id) : '');
+                        }} required>
+                            <option value="">Select a student</option>
+                            {studentEntries.map((student) => (
+                                <option key={student.id} value={student.id}>
+                                    {student.full_name} · {student.university_id}{student.assigned_reviewer_name ? ` (assigned: ${student.assigned_reviewer_name})` : ''}
+                                </option>
+                            ))}
+                        </select>
+                    </label>
+                    <label>Assigned lecturer
+                        <select value={directoryLecturerId} onChange={(event) => setDirectoryLecturerId(event.target.value)} required>
+                            <option value="">Select a lecturer</option>
+                            {lecturerEntries.map((lecturer) => (
+                                <option key={lecturer.id} value={lecturer.id}>
+                                    {lecturer.full_name} · {lecturer.university_id}
+                                </option>
+                            ))}
+                        </select>
+                    </label>
+                </div>
+                <button className="admin-primary compact" disabled={assignmentBusy || !studentEntryId || !directoryLecturerId || !studentEntries.length || !lecturerEntries.length}>
+                    <Plus size={16} /> {assignmentBusy ? 'Saving...' : 'Save student mapping'}
+                </button>
+                {(!studentEntries.length || !lecturerEntries.length) && <p className="admin-mapping-note">Active student and lecturer directory records are required. Add records in University directory.</p>}
+            </form>
+        </div>
         <div className="admin-table-tools"><span>{mappings.length} subject mappings</span></div>
         <div className="admin-table-wrap"><table className="admin-table"><thead><tr><th>Subject area</th><th>Lecturer</th><th>Department</th><th>Profile skills</th><th aria-label="Actions" /></tr></thead><tbody>
             {mappings.map((mapping) => <tr key={mapping.id}>
@@ -283,6 +360,20 @@ function SubjectMappings({ mappings, users, onRefresh }) {
                 <td><button type="button" className="admin-danger-icon" title={`Remove ${mapping.subject_area} mapping`} aria-label={`Remove ${mapping.subject_area} mapping`} disabled={deletingId === mapping.id} onClick={() => removeMapping(mapping)}><Trash2 size={16} /></button></td>
             </tr>)}
             {mappings.length === 0 && <tr><td colSpan="5" className="admin-empty">No subject mappings configured yet.</td></tr>}
+        </tbody></table></div>
+        <div className="admin-table-tools"><span>{studentMappings.length} student lecturer mappings</span></div>
+        <div className="admin-table-wrap"><table className="admin-table"><thead><tr><th>Student</th><th>University ID</th><th>Department</th><th>Assigned lecturer</th><th>Lecturer ID</th><th aria-label="Actions" /></tr></thead><tbody>
+            {studentMappings.map((student) => (
+                <tr key={student.id}>
+                    <td><strong>{student.full_name}</strong><span className="admin-table-sub">{student.claimed_username ? `@${student.claimed_username}` : 'Not registered'}</span></td>
+                    <td>{student.university_id}</td>
+                    <td>{student.department || '—'}</td>
+                    <td>{student.assigned_reviewer_name || '—'}</td>
+                    <td>{directory.find((entry) => entry.id === student.assigned_reviewer_id)?.university_id || '—'}</td>
+                    <td><button type="button" className="admin-danger-icon" title={`Remove lecturer assignment for ${student.full_name}`} aria-label={`Remove lecturer assignment for ${student.full_name}`} disabled={clearingStudentId === student.id} onClick={() => clearStudentMapping(student)}><Trash2 size={16} /></button></td>
+                </tr>
+            ))}
+            {studentMappings.length === 0 && <tr><td colSpan="6" className="admin-empty">No student lecturer mappings configured yet.</td></tr>}
         </tbody></table></div>
     </>;
 }

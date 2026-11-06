@@ -66,6 +66,87 @@ class JwtLifetimeTests(APITestCase):
 
 
 class SubjectMappingManagementTests(APITestCase):
+    def test_admin_can_assign_student_directory_entry_to_lecturer(self):
+        admin = User.objects.create_superuser(username='student-mapping-admin', password='test-password')
+        student = UniversityDirectoryEntry.objects.create(
+            university_id='202600101',
+            person_type='STUDENT',
+            first_name='Student',
+            last_name='One',
+            email='student.one@example.com',
+            department='Computing',
+        )
+        lecturer = UniversityDirectoryEntry.objects.create(
+            university_id='10000001',
+            person_type='LECTURER',
+            first_name='Ada',
+            last_name='Lovelace',
+            email='ada.lecturer@example.com',
+            department='Computing',
+        )
+        self.client.force_authenticate(user=admin)
+
+        assigned = self.client.patch(
+            reverse('admin_university_directory_assignment', args=[student.pk]),
+            {'assigned_reviewer': lecturer.pk},
+            format='json',
+        )
+
+        self.assertEqual(assigned.status_code, status.HTTP_200_OK, assigned.data)
+        self.assertEqual(assigned.data['assigned_reviewer_id'], lecturer.pk)
+        self.assertEqual(assigned.data['assigned_reviewer_name'], 'Ada Lovelace')
+        student.refresh_from_db()
+        self.assertEqual(student.assigned_reviewer_id, lecturer.pk)
+
+        listed = self.client.get(reverse('admin_university_directory'))
+        student_entry = next(item for item in listed.data if item['id'] == student.pk)
+        self.assertEqual(student_entry['assigned_reviewer_id'], lecturer.pk)
+
+        cleared = self.client.patch(
+            reverse('admin_university_directory_assignment', args=[student.pk]),
+            {'assigned_reviewer': None},
+            format='json',
+        )
+        self.assertEqual(cleared.status_code, status.HTTP_200_OK, cleared.data)
+        self.assertIsNone(cleared.data['assigned_reviewer_id'])
+
+    def test_student_lecturer_mapping_requires_admin_and_active_lecturer(self):
+        student = UniversityDirectoryEntry.objects.create(
+            university_id='202600102',
+            person_type='STUDENT',
+            first_name='Student',
+            last_name='Two',
+            email='student.two@example.com',
+            department='Computing',
+        )
+        inactive_lecturer = UniversityDirectoryEntry.objects.create(
+            university_id='10000002',
+            person_type='LECTURER',
+            first_name='Inactive',
+            last_name='Lecturer',
+            email='inactive.lecturer@example.com',
+            department='Computing',
+            is_active=False,
+        )
+        self.client.force_authenticate(user=User.objects.create_user(username='student-mapping-user'))
+
+        forbidden = self.client.patch(
+            reverse('admin_university_directory_assignment', args=[student.pk]),
+            {'assigned_reviewer': inactive_lecturer.pk},
+            format='json',
+        )
+        self.assertEqual(forbidden.status_code, status.HTTP_403_FORBIDDEN)
+
+        admin = User.objects.create_superuser(username='student-mapping-validator', password='test-password')
+        self.client.force_authenticate(user=admin)
+        invalid_lecturer = self.client.patch(
+            reverse('admin_university_directory_assignment', args=[student.pk]),
+            {'assigned_reviewer': inactive_lecturer.pk},
+            format='json',
+        )
+        self.assertEqual(invalid_lecturer.status_code, status.HTTP_400_BAD_REQUEST)
+
+
     def test_lecturer_can_save_skills_on_their_profile(self):
         lecturer = User.objects.create_user(username='skillset-lecturer', password='test-password')
         UserProfile.objects.create(user=lecturer, role='LECTURER', department='Computing')
@@ -385,7 +466,70 @@ class PublicationTests(APITestCase):
                 status='INVITED',
             ).exists()
         )
+        self.assertFalse(ReviewerSubjectArea.objects.filter(
+            reviewer=reviewer,
+            subject_area='Artificial Intelligence',
+        ).exists())
 
+    def test_lecturer_publication_uses_subject_expertise_not_directory_assignment(self):
+        matching_reviewer, _ = self.create_supervisor('lecturer-subject-match')
+        directory_reviewer, _ = self.create_supervisor('lecturer-directory-assignment')
+        owner, _ = self.create_member('lecturer-publication-owner', role='LECTURER')
+        self.assign_predefined_reviewer(owner, directory_reviewer)
+        ReviewerSubjectArea.objects.create(
+            reviewer=matching_reviewer,
+            subject_area='Artificial Intelligence',
+        )
+        self.client.force_authenticate(user=owner)
+
+        response = self.client.post(
+            reverse('publication-list'),
+            {
+                'title': 'Lecturer expertise matched publication',
+                'abstract': self.valid_abstract,
+                'pub_type': 'JOURNAL',
+                'subject_area': 'Artificial Intelligence',
+                'file_attachment': self.manuscript_upload(),
+            },
+            format='multipart',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED, response.data)
+        self.assertEqual(response.data['supervisor_id'], matching_reviewer.id)
+        self.assertTrue(PublicationReviewInvitation.objects.filter(
+            publication_id=response.data['id'],
+            reviewer=matching_reviewer,
+            role='SUPERVISOR',
+            status='INVITED',
+        ).exists())
+        self.assertFalse(PublicationReviewInvitation.objects.filter(
+            publication_id=response.data['id'],
+            reviewer=directory_reviewer,
+        ).exists())
+
+    def test_lecturer_publication_requires_a_subject_expertise_match(self):
+        reviewer, reviewer_profile = self.create_supervisor('nonmatching-lecturer-reviewer')
+        reviewer_profile.department = 'Education'
+        reviewer_profile.skillset = 'Curriculum design'
+        reviewer_profile.save(update_fields=['department', 'skillset'])
+        owner, _ = self.create_member('lecturer-without-match', role='LECTURER')
+        self.client.force_authenticate(user=owner)
+
+        response = self.client.post(
+            reverse('publication-list'),
+            {
+                'title': 'Publication without a subject match',
+                'abstract': self.valid_abstract,
+                'pub_type': 'JOURNAL',
+                'subject_area': 'Artificial Intelligence',
+                'file_attachment': self.manuscript_upload(),
+            },
+            format='multipart',
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn('supervisor', response.data)
+        self.assertFalse(Publication.objects.filter(title='Publication without a subject match').exists())
 
     def test_publication_uses_predefined_reviewer_instead_of_subject_expertise(self):
         matching, matching_profile = self.create_supervisor('expertise-matched-lecturer')
@@ -1460,4 +1604,3 @@ class PublicationTests(APITestCase):
         )
         # Should not raise
         publication_valid.clean()
-
