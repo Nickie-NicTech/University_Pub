@@ -998,12 +998,35 @@ class PublicationTests(APITestCase):
             format='json',
         )
         self.assertEqual(second_update.status_code, status.HTTP_200_OK, second_update.data)
+        no_change = self.client.put(
+            reverse('publication-detail', args=[publication.id]),
+            {
+                'title': 'Current version title',
+                'abstract': self.valid_abstract,
+                'pub_type': 'JOURNAL',
+                'subject_area': 'Computer Science',
+                'authors': [author.id],
+            },
+            format='multipart',
+        )
+        self.assertEqual(no_change.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(PublicationVersion.objects.filter(publication=publication).count(), 2)
 
         history = self.client.get(reverse('publication-history', args=[publication.id]))
         self.assertEqual(history.status_code, status.HTTP_200_OK)
         self.assertEqual([version['version_number'] for version in history.data], [2, 1])
         self.assertEqual(history.data[0]['snapshot']['title'], 'Second version title')
         self.assertEqual(history.data[1]['snapshot']['title'], 'Original version title')
+        self.assertEqual(history.data[0]['changes'], [{
+            'field': 'Title',
+            'from': 'Second version title',
+            'to': 'Current version title',
+        }])
+        self.assertEqual(history.data[1]['changes'], [{
+            'field': 'Title',
+            'from': 'Original version title',
+            'to': 'Second version title',
+        }])
         self.assertEqual(history.data[1]['snapshot']['authors'][0]['name'], 'Ada Lovelace')
         self.assertEqual(history.data[1]['snapshot']['reviewers'][0]['name'], 'history-reviewer')
         self.assertEqual(PublicationVersion.objects.filter(publication=publication).count(), 2)

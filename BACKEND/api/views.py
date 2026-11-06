@@ -13,7 +13,7 @@ from django.shortcuts import get_object_or_404
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.views import APIView
-from rest_framework.exceptions import NotFound, PermissionDenied
+from rest_framework.exceptions import NotFound, PermissionDenied, ValidationError
 from rest_framework.response import Response
 from .models import Publication, PublicationVersion, PublicationReviewInvitation, ReviewerSubjectArea, ReviewerSubjectAreaExclusion, AuthorProfile, PublicationDeletionRequest, UserProfile, UserNotification, BroadcastMessage, UniversityDirectoryEntry
 from .serializers import PublicationSerializer, AuthorProfileSerializer, UserRegistrationSerializer, PublicationDeletionRequestSerializer, UserProfileSerializer, UserNotificationSerializer, BroadcastMessageSerializer, AdminUserSerializer, AdminUserCreateSerializer, UniversityDirectoryEntrySerializer, SupervisorSerializer, AdminSubjectMappingSerializer
@@ -242,6 +242,9 @@ class PublicationViewSet(viewsets.ModelViewSet):
             raise PermissionDenied('Approved publications cannot be edited.')
         if publication.review_status == 'PENDING' and publication.review_invitations.filter(status='ACCEPTED').exists():
             raise PermissionDenied('Wait for your accepted reviewers to request revisions before changing this publication.')
+        changes = self._get_publication_changes(publication, serializer.validated_data)
+        if not changes:
+            raise ValidationError({'detail': 'No changes were detected. Update at least one field before saving.'})
         previously_invited = set(
             publication.review_invitations.filter(status='INVITED').values_list('reviewer_id', flat=True)
         )
@@ -249,24 +252,7 @@ class PublicationViewSet(viewsets.ModelViewSet):
         latest_version = publication.versions.order_by('-version_number').values_list(
             'version_number', flat=True,
         ).first() or 0
-        snapshot = {
-            'title': publication.title,
-            'abstract': publication.abstract,
-            'pub_type': publication.pub_type,
-            'subject_area': publication.subject_area,
-            'authors': [
-                {'name': str(author), 'institution': author.institution}
-                for author in publication.authors.all()
-            ],
-            'reviewers': [
-                {
-                    'role': invitation.get_role_display(),
-                    'name': invitation.reviewer.get_full_name() or invitation.reviewer.username,
-                }
-                for invitation in publication.review_invitations.select_related('reviewer')
-            ],
-            'file_attachment': publication.file_attachment.name if publication.file_attachment else '',
-        }
+        snapshot = self._publication_snapshot(publication)
         with transaction.atomic():
             PublicationVersion.objects.create(
                 publication=publication,
@@ -300,6 +286,95 @@ class PublicationViewSet(viewsets.ModelViewSet):
                     f'/lecturer/reviews?publication={publication.pk}',
                 )
                 self._notification_warning = self._notification_warning or warning
+
+    def _publication_snapshot(self, publication):
+        return {
+            'title': publication.title,
+            'abstract': publication.abstract,
+            'pub_type': publication.pub_type,
+            'subject_area': publication.subject_area,
+            'authors': [
+                {'name': str(author), 'institution': author.institution}
+                for author in publication.authors.all()
+            ],
+            'reviewers': [
+                {
+                    'role': invitation.get_role_display(),
+                    'name': invitation.reviewer.get_full_name() or invitation.reviewer.username,
+                }
+                for invitation in publication.review_invitations.select_related('reviewer')
+            ],
+            'file_attachment': publication.file_attachment.name if publication.file_attachment else '',
+        }
+
+    def _get_publication_changes(self, publication, validated_data):
+        fields = [
+            ('title', 'Title'),
+            ('abstract', 'Abstract'),
+            ('pub_type', 'Publication type'),
+            ('subject_area', 'Subject area'),
+        ]
+        changes = [
+            label for field, label in fields
+            if field in validated_data and getattr(publication, field) != validated_data[field]
+        ]
+
+        authors = validated_data.get('authors')
+        if authors is not None and set(publication.authors.values_list('pk', flat=True)) != {
+            author.pk for author in authors
+        }:
+            changes.append('Authors')
+
+        current_reviewers = {
+            invitation.role: invitation.reviewer_id
+            for invitation in publication.review_invitations.all()
+        }
+        for field, role, label in [
+            ('supervisor', 'SUPERVISOR', 'Supervisor'),
+            ('co_supervisor', 'CO_SUPERVISOR', 'Co-supervisor'),
+        ]:
+            if field in validated_data:
+                reviewer = validated_data[field]
+                if current_reviewers.get(role) != (reviewer.pk if reviewer else None):
+                    changes.append(label)
+
+        if 'file_attachment' in validated_data:
+            uploaded_file = validated_data['file_attachment']
+            if uploaded_file is None:
+                if publication.file_attachment:
+                    changes.append('Manuscript')
+            else:
+                changes.append('Manuscript')
+
+        return changes
+
+    def _compare_publication_snapshots(self, previous, current):
+        fields = [
+            ('title', 'Title'),
+            ('abstract', 'Abstract'),
+            ('pub_type', 'Publication type'),
+            ('subject_area', 'Subject area'),
+            ('authors', 'Authors'),
+            ('reviewers', 'Reviewers'),
+            ('file_attachment', 'Manuscript'),
+        ]
+        changes = []
+        for field, label in fields:
+            old_value = previous.get(field, '')
+            new_value = current.get(field, '')
+            if old_value == new_value:
+                continue
+            if field == 'authors':
+                old_value = '; '.join(author['name'] for author in old_value) or 'None listed'
+                new_value = '; '.join(author['name'] for author in new_value) or 'None listed'
+            elif field == 'reviewers':
+                old_value = '; '.join(f"{reviewer['name']} ({reviewer['role']})" for reviewer in old_value) or 'None assigned'
+                new_value = '; '.join(f"{reviewer['name']} ({reviewer['role']})" for reviewer in new_value) or 'None assigned'
+            elif field == 'file_attachment':
+                old_value = old_value.rsplit('/', 1)[-1] or 'None'
+                new_value = new_value.rsplit('/', 1)[-1] or 'None'
+            changes.append({'field': label, 'from': old_value, 'to': new_value})
+        return changes
 
     def perform_create(self, serializer):
         profile = UserProfile.objects.filter(user=self.request.user).first()
@@ -347,7 +422,9 @@ class PublicationViewSet(viewsets.ModelViewSet):
         ):
             raise PermissionDenied('Only the publication owner may view its change history.')
 
-        versions = publication.versions.select_related('changed_by').all()
+        versions = list(publication.versions.select_related('changed_by').all())
+        versions_by_number = {version.version_number: version for version in versions}
+        current_snapshot = self._publication_snapshot(publication)
         history = []
         for version in versions:
             snapshot = version.snapshot.copy()
@@ -365,6 +442,12 @@ class PublicationViewSet(viewsets.ModelViewSet):
                     if version.changed_by else 'Former user'
                 ),
                 'snapshot': snapshot,
+                'changes': self._compare_publication_snapshots(
+                    version.snapshot,
+                    versions_by_number.get(version.version_number + 1, None).snapshot
+                    if versions_by_number.get(version.version_number + 1)
+                    else current_snapshot,
+                ),
             })
         return Response(history)
 

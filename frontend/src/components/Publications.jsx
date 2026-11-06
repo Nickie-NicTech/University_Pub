@@ -65,6 +65,22 @@ export default function Publications({ user, profileActivity }) {
     const [historyLoadingId, setHistoryLoadingId] = useState(null);
     const [historyError, setHistoryError] = useState('');
 
+    const originalAuthorIds = (editingPublication?.authors_details || [])
+        .map((author) => String(author.id))
+        .sort()
+        .join(',');
+    const selectedAuthorIds = selectedAuthors
+        .map((author) => String(author.id))
+        .sort()
+        .join(',');
+    const hasPublicationChanges = !editingId || !editingPublication
+        || title !== editingPublication.title
+        || abstract !== editingPublication.abstract
+        || pubType !== editingPublication.pub_type
+        || subject !== editingPublication.subject_area
+        || selectedAuthorIds !== originalAuthorIds
+        || Boolean(file);
+
     // Restrictions configuration boundary parameters
     const canWrite = user && ['STUDENT', 'LECTURER'].includes(user.role);
     const latestHighlights = highlights.slice(0, 3);
@@ -411,6 +427,10 @@ export default function Publications({ user, profileActivity }) {
     const handleSave = async (e) => {
         e.preventDefault();
         setActionFeedback(null);
+        if (editingId && !hasPublicationChanges) {
+            setActionFeedback({ type: 'error', message: 'No changes were detected. Update at least one field before saving.' });
+            return;
+        }
 
         const wordCount = countWords(abstract);
         if (wordCount < 150 || wordCount > 250) {
@@ -948,6 +968,29 @@ export default function Publications({ user, profileActivity }) {
                                                                 Version {version.version_number} · archived {new Date(version.created_at).toLocaleString()} by {version.changed_by}
                                                             </summary>
                                                             <div style={{ marginTop: '8px', padding: '10px 12px', background: '#f8fafc', borderRadius: '5px', lineHeight: 1.5, overflowWrap: 'anywhere' }}>
+                                                                <div style={{ marginBottom: '10px' }}>
+                                                                    <strong>Changes in this update</strong>
+                                                                    {version.changes?.length ? (
+                                                                        <ul style={{ display: 'grid', gap: '6px', margin: '5px 0 0', paddingLeft: '20px' }}>
+                                                                            {version.changes.map((change) => (
+                                                                                <li key={change.field}>
+                                                                                    <strong>{change.field}:</strong>{' '}
+                                                                                    {change.field === 'Abstract' ? (
+                                                                                        <details>
+                                                                                            <summary style={{ display: 'inline', cursor: 'pointer', color: '#0369a1' }}>Compare previous and updated text</summary>
+                                                                                            <p style={{ margin: '6px 0' }}><strong>Previous:</strong> {change.from}</p>
+                                                                                            <p style={{ margin: '6px 0' }}><strong>Updated:</strong> {change.to}</p>
+                                                                                        </details>
+                                                                                    ) : (
+                                                                                        <><del>{change.from}</del>{' '}<span>to</span>{' '}<ins>{change.to}</ins></>
+                                                                                    )}
+                                                                                </li>
+                                                                            ))}
+                                                                        </ul>
+                                                                    ) : (
+                                                                        <p style={{ margin: '5px 0 0', color: '#64748b' }}>No publication fields changed in this update.</p>
+                                                                    )}
+                                                                </div>
                                                                 <p style={{ margin: '0 0 5px' }}><strong>Title:</strong> {version.snapshot.title}</p>
                                                                 <p style={{ margin: '0 0 5px' }}><strong>Type:</strong> {version.snapshot.pub_type} · <strong>Subject:</strong> {version.snapshot.subject_area}</p>
                                                                 <p style={{ margin: '0 0 5px' }}><strong>Authors:</strong> {version.snapshot.authors.map((author) => author.name).join('; ') || 'None listed'}</p>
@@ -1116,9 +1159,14 @@ export default function Publications({ user, profileActivity }) {
                             )}
                         </div>
                         <div style={{ display: 'flex', gap: '12px' }}>
+                            {editingId && !hasPublicationChanges && (
+                                <p role="status" style={{ margin: 0, alignSelf: 'center', color: '#64748b', fontSize: '.82rem' }}>
+                                    Make a change to enable updating.
+                                </p>
+                            )}
                             <button
                                 type="submit"
-                                disabled={publicationSaving || !isAbstractWordCountValid || (!editingId && !subject.trim())}
+                                disabled={publicationSaving || !isAbstractWordCountValid || (!editingId && !subject.trim()) || Boolean(editingId && !hasPublicationChanges)}
                                 title={!isAbstractWordCountValid ? `Abstract must be between 150 and 250 words (currently ${abstractWordCount} words)` : ''}
                                 style={{
                                     padding: '10px 16px',
