@@ -909,6 +909,34 @@ class PublicationTests(APITestCase):
         self.assertEqual(response.data['total_downloads'], 4)
         self.assertEqual(response.data['pending_deletion_requests'], 1)
 
+    def test_current_student_profile_includes_assigned_supervisor_name(self):
+        student = User.objects.create_user(username='profile-student', password='test-password')
+        UserProfile.objects.create(user=student, role='STUDENT', department='Computer Science')
+        lecturer = UniversityDirectoryEntry.objects.create(
+            university_id='10000021',
+            person_type='LECTURER',
+            first_name='Ada',
+            last_name='Lovelace',
+            email='ada.profile@example.com',
+            department='Computer Science',
+        )
+        UniversityDirectoryEntry.objects.create(
+            university_id='202600121',
+            person_type='STUDENT',
+            first_name='Student',
+            last_name='One',
+            email='student.profile@example.com',
+            department='Computer Science',
+            claimed_by=student,
+            assigned_reviewer=lecturer,
+        )
+        self.client.force_authenticate(user=student)
+
+        response = self.client.get(reverse('current_user_profile'))
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data['assigned_supervisor_name'], 'Ada Lovelace')
+
     def test_only_owner_can_edit_publication(self):
         reviewer, supervisor = self.create_supervisor()
         owner, _ = self.create_member('owner', supervisor)

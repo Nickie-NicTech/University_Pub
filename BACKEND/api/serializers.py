@@ -31,6 +31,7 @@ class UserProfileSerializer(serializers.ModelSerializer):
     feedback_materials = serializers.SerializerMethodField()
     total_downloads = serializers.SerializerMethodField()
     pending_deletion_requests = serializers.SerializerMethodField()
+    assigned_supervisor_name = serializers.SerializerMethodField()
 
     class Meta:
         model = UserProfile
@@ -38,7 +39,7 @@ class UserProfileSerializer(serializers.ModelSerializer):
             'username', 'first_name', 'last_name', 'email', 'role', 'department', 'skillset',
             'profile_picture', 'uploaded_materials', 'approved_materials',
             'pending_review_materials', 'feedback_materials', 'total_downloads',
-            'pending_deletion_requests',
+            'pending_deletion_requests', 'assigned_supervisor_name',
         ]
         read_only_fields = [
             'role', 'uploaded_materials', 'approved_materials', 'pending_review_materials',
@@ -79,6 +80,20 @@ class UserProfileSerializer(serializers.ModelSerializer):
 
     def get_pending_deletion_requests(self, profile):
         return profile.user.publication_deletion_requests.filter(status='PENDING').count()
+
+    def get_assigned_supervisor_name(self, profile):
+        if profile.role != 'STUDENT':
+            return ''
+        entry = UniversityDirectoryEntry.objects.filter(
+            claimed_by=profile.user,
+            person_type='STUDENT',
+            is_active=True,
+            assigned_reviewer__person_type='LECTURER',
+            assigned_reviewer__is_active=True,
+        ).select_related('assigned_reviewer').first()
+        if not entry:
+            return ''
+        return f'{entry.assigned_reviewer.first_name} {entry.assigned_reviewer.last_name}'.strip()
 
 class AuthorProfileSerializer(serializers.ModelSerializer):
     name = serializers.SerializerMethodField()

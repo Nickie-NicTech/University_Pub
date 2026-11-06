@@ -1107,9 +1107,15 @@ export default function Publications({ user, profileActivity }) {
                                     fontSize: '.85rem',
                                 }}
                             >
-                                {editingId
-                                    ? 'Your publication reviewer is predefined by the university and cannot be changed manually.'
-                                    : 'Your publication will automatically be assigned to the lecturer predefined in your university record when you submit it.'}
+                                {user.role === 'STUDENT'
+                                    ? profileActivity
+                                        ? profileActivity.assigned_supervisor_name
+                                            ? `Your publication will be submitted to ${profileActivity.assigned_supervisor_name}.`
+                                            : 'No active supervisor is assigned to your university record. Contact an administrator before submitting.'
+                                        : 'Loading your assigned supervisor…'
+                                    : editingId
+                                        ? 'The reviewer assigned to this publication cannot be changed here.'
+                                        : 'Your supervisor will be selected based on the subject area and lecturer expertise.'}
                             </p>
                         </div>
 
