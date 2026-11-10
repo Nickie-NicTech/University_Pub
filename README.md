@@ -2,16 +2,11 @@
 
 University publication repository with a Django REST API and React/Vite frontend.
 
-CSI605 team project, Group 2, Department of Computer Science, Faculty of Science, University of Botswana.
+CSI605 group project, Group 2, Department of Computer Science, Faculty of Natural and Applied Science, University of Botswana.
 
 ## Documentation
 
 Project documentation, including requirements, analysis and design, increments, testing and traceability, is in the [`docs/`](docs/) folder:
-
-| Document | Contents |
-| --- | --- |
-| [`docs/UNIPUB_Final_Submission.docx`](docs/UNIPUB_Final_Submission.docx) | Requirements, analysis and design, Increments 1 and 2, final enhancements, testing and traceability |
-| [`docs/CONTRIBUTIONS.md`](docs/CONTRIBUTIONS.md) | Who did what on the project |
 
 ## Team
 
