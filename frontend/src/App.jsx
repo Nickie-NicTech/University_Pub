@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate, Link } from 'react-router-dom';
 import { jwtDecode } from 'jwt-decode';
-import { BookOpen, Library, LogIn, LogOut, ShieldCheck, UserPlus, UserRound } from 'lucide-react';
+import { BookOpen, ClipboardCheck, Library, LogIn, LogOut, ShieldCheck, UserPlus, UserRound } from 'lucide-react';
 import Login from './components/Login';
 import SignUp from './components/signUp';
 import Publications from './components/Publications';
@@ -17,6 +17,7 @@ export default function App() {
   const user = ['APPROVER', 'REVIEWER'].includes(decodedUser?.role)
     ? { ...decodedUser, role: 'LECTURER' }
     : decodedUser;
+  const [profileActivity, setProfileActivity] = useState(null);
   const [broadcasts, setBroadcasts] = useState([]);
   const [notifications, setNotifications] = useState([]);
   const [notificationError, setNotificationError] = useState('');
@@ -97,6 +98,12 @@ export default function App() {
                   Admin portal
                 </Link>
               )}
+              {user?.role === 'LECTURER' && (
+                <Link to="/lecturer/reviews" style={{ marginLeft: '18px', padding: '7px 11px', borderRadius: '6px', color: '#fff', background: '#6d28d9', textDecoration: 'none', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: '7px' }}>
+                  <ClipboardCheck size={16} aria-hidden="true" />
+                  Review desk
+                </Link>
+              )}
             </nav>
           </div>
 
@@ -132,10 +139,10 @@ export default function App() {
 
         {/* Viewport Workspace */}
         <div style={{ flex: 1, minHeight: 0, overflow: 'hidden', position: 'relative', display: 'flex' }}>
-          {token && user?.role !== 'ADMIN' && <AccountSidebar username={user?.username} />}
+          {token && user?.role !== 'ADMIN' && <AccountSidebar username={user?.username} onActivityChange={setProfileActivity} />}
           <main style={{ flex: 1, minWidth: 0, overflow: 'hidden', position: 'relative' }}>
             <Routes>
-              <Route path="/" element={<Publications user={user} />} />
+              <Route path="/" element={<Publications user={user} profileActivity={profileActivity} />} />
               <Route path="/lecturer/reviews" element={user?.role === 'LECTURER' ? <LecturerReviewPanel user={user} /> : <Navigate to="/" replace />} />
               <Route path="/admin" element={user?.role === 'ADMIN' ? <AdminPortal onLogout={handleLogout} /> : <Navigate to={token ? '/' : '/login'} replace />} />
               <Route path="/login" element={!token ? <Login onLoginSuccess={(tok) => setToken(tok)} /> : <Navigate to={user?.role === 'ADMIN' ? '/admin' : '/'} replace />} />

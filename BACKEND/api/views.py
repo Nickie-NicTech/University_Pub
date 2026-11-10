@@ -2,18 +2,20 @@ import secrets
 import logging
 from datetime import date
 from smtplib import SMTPException
+from django.db import transaction
 from django.db.models import Q, F, Sum
 from django.conf import settings
 from django.core.mail import send_mail
+from django.core.files.storage import default_storage
 from django.utils import timezone
 from django.http import FileResponse
 from django.shortcuts import get_object_or_404
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.views import APIView
-from rest_framework.exceptions import NotFound, PermissionDenied
+from rest_framework.exceptions import NotFound, PermissionDenied, ValidationError
 from rest_framework.response import Response
-from .models import Publication, PublicationReviewInvitation, ReviewerSubjectArea, ReviewerSubjectAreaExclusion, AuthorProfile, PublicationDeletionRequest, UserProfile, UserNotification, BroadcastMessage, UniversityDirectoryEntry
+from .models import Publication, PublicationVersion, PublicationReviewInvitation, ReviewerSubjectArea, ReviewerSubjectAreaExclusion, AuthorProfile, PublicationDeletionRequest, UserProfile, UserNotification, BroadcastMessage, UniversityDirectoryEntry
 from .serializers import PublicationSerializer, AuthorProfileSerializer, UserRegistrationSerializer, PublicationDeletionRequestSerializer, UserProfileSerializer, UserNotificationSerializer, BroadcastMessageSerializer, AdminUserSerializer, AdminUserCreateSerializer, UniversityDirectoryEntrySerializer, SupervisorSerializer, AdminSubjectMappingSerializer
 from .reviewer_matching import canonical_subject_area, rank_lecturers, subject_similarity
 import random
@@ -240,11 +242,25 @@ class PublicationViewSet(viewsets.ModelViewSet):
             raise PermissionDenied('Approved publications cannot be edited.')
         if publication.review_status == 'PENDING' and publication.review_invitations.filter(status='ACCEPTED').exists():
             raise PermissionDenied('Wait for your accepted reviewers to request revisions before changing this publication.')
+        changes = self._get_publication_changes(publication, serializer.validated_data)
+        if not changes:
+            raise ValidationError({'detail': 'No changes were detected. Update at least one field before saving.'})
         previously_invited = set(
             publication.review_invitations.filter(status='INVITED').values_list('reviewer_id', flat=True)
         )
         resubmitting = publication.review_status == 'REVISION_REQUESTED'
-        publication = serializer.save(is_approved=False, review_feedback='')
+        latest_version = publication.versions.order_by('-version_number').values_list(
+            'version_number', flat=True,
+        ).first() or 0
+        snapshot = self._publication_snapshot(publication)
+        with transaction.atomic():
+            PublicationVersion.objects.create(
+                publication=publication,
+                version_number=latest_version + 1,
+                changed_by=self.request.user,
+                snapshot=snapshot,
+            )
+            publication = serializer.save(is_approved=False, review_feedback='')
         accepted = publication.review_invitations.filter(status='ACCEPTED')
         if resubmitting:
             accepted.update(decision='PENDING', feedback='')
@@ -270,6 +286,95 @@ class PublicationViewSet(viewsets.ModelViewSet):
                     f'/lecturer/reviews?publication={publication.pk}',
                 )
                 self._notification_warning = self._notification_warning or warning
+
+    def _publication_snapshot(self, publication):
+        return {
+            'title': publication.title,
+            'abstract': publication.abstract,
+            'pub_type': publication.pub_type,
+            'subject_area': publication.subject_area,
+            'authors': [
+                {'name': str(author), 'institution': author.institution}
+                for author in publication.authors.all()
+            ],
+            'reviewers': [
+                {
+                    'role': invitation.get_role_display(),
+                    'name': invitation.reviewer.get_full_name() or invitation.reviewer.username,
+                }
+                for invitation in publication.review_invitations.select_related('reviewer')
+            ],
+            'file_attachment': publication.file_attachment.name if publication.file_attachment else '',
+        }
+
+    def _get_publication_changes(self, publication, validated_data):
+        fields = [
+            ('title', 'Title'),
+            ('abstract', 'Abstract'),
+            ('pub_type', 'Publication type'),
+            ('subject_area', 'Subject area'),
+        ]
+        changes = [
+            label for field, label in fields
+            if field in validated_data and getattr(publication, field) != validated_data[field]
+        ]
+
+        authors = validated_data.get('authors')
+        if authors is not None and set(publication.authors.values_list('pk', flat=True)) != {
+            author.pk for author in authors
+        }:
+            changes.append('Authors')
+
+        current_reviewers = {
+            invitation.role: invitation.reviewer_id
+            for invitation in publication.review_invitations.all()
+        }
+        for field, role, label in [
+            ('supervisor', 'SUPERVISOR', 'Supervisor'),
+            ('co_supervisor', 'CO_SUPERVISOR', 'Co-supervisor'),
+        ]:
+            if field in validated_data:
+                reviewer = validated_data[field]
+                if current_reviewers.get(role) != (reviewer.pk if reviewer else None):
+                    changes.append(label)
+
+        if 'file_attachment' in validated_data:
+            uploaded_file = validated_data['file_attachment']
+            if uploaded_file is None:
+                if publication.file_attachment:
+                    changes.append('Manuscript')
+            else:
+                changes.append('Manuscript')
+
+        return changes
+
+    def _compare_publication_snapshots(self, previous, current):
+        fields = [
+            ('title', 'Title'),
+            ('abstract', 'Abstract'),
+            ('pub_type', 'Publication type'),
+            ('subject_area', 'Subject area'),
+            ('authors', 'Authors'),
+            ('reviewers', 'Reviewers'),
+            ('file_attachment', 'Manuscript'),
+        ]
+        changes = []
+        for field, label in fields:
+            old_value = previous.get(field, '')
+            new_value = current.get(field, '')
+            if old_value == new_value:
+                continue
+            if field == 'authors':
+                old_value = '; '.join(author['name'] for author in old_value) or 'None listed'
+                new_value = '; '.join(author['name'] for author in new_value) or 'None listed'
+            elif field == 'reviewers':
+                old_value = '; '.join(f"{reviewer['name']} ({reviewer['role']})" for reviewer in old_value) or 'None assigned'
+                new_value = '; '.join(f"{reviewer['name']} ({reviewer['role']})" for reviewer in new_value) or 'None assigned'
+            elif field == 'file_attachment':
+                old_value = old_value.rsplit('/', 1)[-1] or 'None'
+                new_value = new_value.rsplit('/', 1)[-1] or 'None'
+            changes.append({'field': label, 'from': old_value, 'to': new_value})
+        return changes
 
     def perform_create(self, serializer):
         profile = UserProfile.objects.filter(user=self.request.user).first()
@@ -307,6 +412,44 @@ class PublicationViewSet(viewsets.ModelViewSet):
             {'detail': 'Permanent deletion is disabled. Owners may submit a deletion request.'},
             status=status.HTTP_405_METHOD_NOT_ALLOWED,
         )
+
+    @action(detail=True, methods=['get'], url_path='history')
+    def history(self, request, pk=None):
+        publication = self.get_object()
+        if (
+            not request.user.is_authenticated
+            or (publication.owner_id != request.user.id and not request.user.is_staff)
+        ):
+            raise PermissionDenied('Only the publication owner may view its change history.')
+
+        versions = list(publication.versions.select_related('changed_by').all())
+        versions_by_number = {version.version_number: version for version in versions}
+        current_snapshot = self._publication_snapshot(publication)
+        history = []
+        for version in versions:
+            snapshot = version.snapshot.copy()
+            attachment = snapshot.get('file_attachment')
+            snapshot['file_attachment_url'] = (
+                request.build_absolute_uri(default_storage.url(attachment))
+                if attachment else ''
+            )
+            history.append({
+                'id': version.id,
+                'version_number': version.version_number,
+                'created_at': version.created_at,
+                'changed_by': (
+                    version.changed_by.get_full_name() or version.changed_by.username
+                    if version.changed_by else 'Former user'
+                ),
+                'snapshot': snapshot,
+                'changes': self._compare_publication_snapshots(
+                    version.snapshot,
+                    versions_by_number.get(version.version_number + 1, None).snapshot
+                    if versions_by_number.get(version.version_number + 1)
+                    else current_snapshot,
+                ),
+            })
+        return Response(history)
 
     @action(detail=True, methods=['get'], url_path='download')
     def download(self, request, pk=None):
@@ -758,7 +901,7 @@ class AdminUniversityDirectoryView(APIView):
     permission_classes = [permissions.IsAdminUser]
 
     def get(self, request):
-        entries = UniversityDirectoryEntry.objects.select_related('claimed_by').all()
+        entries = UniversityDirectoryEntry.objects.select_related('claimed_by', 'assigned_reviewer').all()
         person_type = request.query_params.get('person_type')
         if person_type in {'STUDENT', 'LECTURER'}:
             entries = entries.filter(person_type=person_type)
@@ -818,6 +961,39 @@ class AdminUniversityDirectoryView(APIView):
             )
             created.append(entry)
         return Response(UniversityDirectoryEntrySerializer(created, many=True).data, status=status.HTTP_201_CREATED)
+
+
+class AdminUniversityDirectoryAssignmentView(APIView):
+    permission_classes = [permissions.IsAdminUser]
+
+    def patch(self, request, pk):
+        entry = get_object_or_404(UniversityDirectoryEntry, pk=pk)
+        if entry.person_type != 'STUDENT':
+            return Response(
+                {'student': ['Only student directory records can be assigned a lecturer.']},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        reviewer_id = request.data.get('assigned_reviewer')
+        if reviewer_id in (None, ''):
+            entry.assigned_reviewer = None
+        else:
+            try:
+                reviewer = UniversityDirectoryEntry.objects.get(
+                    pk=reviewer_id,
+                    person_type='LECTURER',
+                    is_active=True,
+                )
+            except (UniversityDirectoryEntry.DoesNotExist, TypeError, ValueError):
+                return Response(
+                    {'assigned_reviewer': ['Choose an active lecturer from the university directory.']},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            entry.assigned_reviewer = reviewer
+
+        entry.save(update_fields=['assigned_reviewer'])
+        entry = UniversityDirectoryEntry.objects.select_related('assigned_reviewer').get(pk=entry.pk)
+        return Response(UniversityDirectoryEntrySerializer(entry).data)
 
 
 class BroadcastMessageView(APIView):

@@ -1,9 +1,9 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { Flame, UserRoundPlus, Search, X, Check, Pencil, Trash2, Download, Eye, Plus, LoaderCircle, SlidersHorizontal } from 'lucide-react';
+import { Flame, UserRoundPlus, Search, X, Check, Pencil, Trash2, Download, Eye, Plus, LoaderCircle, SlidersHorizontal, History, BookOpenCheck, BarChart3, MessageSquareText, Clock3 } from 'lucide-react';
 import API from '../api';
 
-export default function Publications({ user }) {
+export default function Publications({ user, profileActivity }) {
     const [searchParams, setSearchParams] = useSearchParams();
     const [publications, setPublications] = useState([]);
     const [highlights, setHighlights] = useState([]);
@@ -59,10 +59,59 @@ export default function Publications({ user }) {
     const [dateTo, setDateTo] = useState('');
     const [monthFilter, setMonthFilter] = useState('');
     const [datePreset, setDatePreset] = useState('');
+    const [activityStatusFilter, setActivityStatusFilter] = useState('');
+    const [expandedHistoryId, setExpandedHistoryId] = useState(null);
+    const [publicationHistory, setPublicationHistory] = useState({});
+    const [historyLoadingId, setHistoryLoadingId] = useState(null);
+    const [historyError, setHistoryError] = useState('');
+
+    const originalAuthorIds = (editingPublication?.authors_details || [])
+        .map((author) => String(author.id))
+        .sort()
+        .join(',');
+    const selectedAuthorIds = selectedAuthors
+        .map((author) => String(author.id))
+        .sort()
+        .join(',');
+    const hasPublicationChanges = !editingId || !editingPublication
+        || title !== editingPublication.title
+        || abstract !== editingPublication.abstract
+        || pubType !== editingPublication.pub_type
+        || subject !== editingPublication.subject_area
+        || selectedAuthorIds !== originalAuthorIds
+        || Boolean(file);
+    const isSingleAuthorType = ['THESIS', 'DISSERTATION'].includes(pubType);
 
     // Restrictions configuration boundary parameters
     const canWrite = user && ['STUDENT', 'LECTURER'].includes(user.role);
     const latestHighlights = highlights.slice(0, 3);
+    const activityStatusLabels = {
+        APPROVED: 'approved',
+        PENDING: 'pending review',
+        REVISION_REQUESTED: 'feedback',
+        DELETE_REQUEST: 'eligible for deletion request',
+    };
+    const hasSearchFilters = Boolean(
+        search.trim()
+        || authorFilter.trim()
+        || subjectFilter.trim()
+        || publicationTypes.length > 0
+        || searchFields.length !== 4
+        || dateFrom
+        || dateTo
+        || monthFilter
+        || activityStatusFilter
+    );
+    const visiblePublications = activityStatusFilter === 'DELETE_REQUEST'
+        ? publications.filter((publication) => publication.is_owner
+            && !publication.is_approved
+            && publication.review_status !== 'APPROVED'
+            && !publication.has_pending_deletion_request)
+        : activityStatusFilter
+            ? publications.filter((publication) => activityStatusFilter === 'APPROVED'
+                ? publication.is_approved || publication.review_status === 'APPROVED'
+                : publication.review_status === activityStatusFilter)
+            : publications;
     const fetchPublications = useCallback(async () => {
         const params = new URLSearchParams();
         if (search.trim()) {
@@ -105,6 +154,47 @@ export default function Publications({ user }) {
         setPublicationsError('');
     };
 
+    const filterByActivity = (status) => {
+        setActivityStatusFilter(status === 'ALL' ? '' : status);
+        setSearch('');
+        setSearchFields(['title', 'abstract', 'author', 'subject_area']);
+        setPublicationTypes([]);
+        setAuthorFilter('');
+        setSubjectFilter('');
+        setDateFrom('');
+        setDateTo('');
+        setMonthFilter('');
+        setDatePreset('');
+        setPublicationsLoading(true);
+        setPublicationsError('');
+        document.getElementById('publication-results')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    };
+
+    const togglePublicationHistory = async (publicationId) => {
+        if (expandedHistoryId === publicationId) {
+            setExpandedHistoryId(null);
+            return;
+        }
+
+        setExpandedHistoryId(publicationId);
+        setHistoryError('');
+        if (Object.hasOwn(publicationHistory, publicationId)) return;
+
+        setHistoryLoadingId(publicationId);
+        try {
+            const { data } = await API.get(`publications/${publicationId}/history/`);
+            setPublicationHistory((current) => ({
+                ...current,
+                [publicationId]: Array.isArray(data) ? data : [],
+            }));
+        } catch (err) {
+            console.error('Unable to load publication history:', err);
+            setHistoryError(getErrorMessage(err, 'Unable to load publication history.'));
+        } finally {
+            setHistoryLoadingId(null);
+        }
+    };
+
     const refreshPublications = async () => {
         setPublicationsLoading(true);
         setPublicationsError('');
@@ -127,8 +217,6 @@ export default function Publications({ user }) {
         setSubject('');
         setFile(null);
         setSelectedAuthors([]);
-        setSupervisorId('');
-        setCoSupervisorId('');
     };
 
     const startEditing = (publication) => {
@@ -139,8 +227,6 @@ export default function Publications({ user }) {
         setPubType(publication.pub_type);
         setSubject(publication.subject_area);
         setSelectedAuthors(publication.authors_details || []);
-        setSupervisorId(publication.supervisor_id ? String(publication.supervisor_id) : '');
-        setCoSupervisorId(publication.co_supervisor_id ? String(publication.co_supervisor_id) : '');
         setShowSubmissionForm(true);
     };
 
@@ -195,11 +281,6 @@ export default function Publications({ user }) {
         setSearchParams(nextParams, { replace: true });
     }, [publications, publicationsLoading, searchParams, setSearchParams]);
 
-    const hasSearchFilters = Boolean(
-        search.trim() || publicationTypes.length || authorFilter.trim() || subjectFilter.trim()
-        || dateFrom || dateTo || monthFilter
-    );
-
     const rankedSupervisors = supervisors.slice(0, 1);
     const reviewInvitations = editingPublication?.review_invitations || [];
     const noReviewersResponded = reviewInvitations.length > 0
@@ -233,66 +314,6 @@ export default function Publications({ user }) {
     }, [canWrite]);
 
     useEffect(() => {
-        if (!canWrite) {
-            setSupervisorLoading(false);
-            return;
-        }
-
-        // Do not look for a reviewer until a subject area has been selected.
-        if (!subject.trim() && !editingId) {            setSupervisors([]);
-            setSupervisorId('');
-            setCoSupervisorId('');
-            setSupervisorError('');
-            setSupervisorLoading(false);
-            return;
-        }
-
-        let isCurrentRequest = true;
-
-        setSupervisorLoading(true);
-        setSupervisorError('');
-
-        const query = `?subject_area=${encodeURIComponent(subject.trim())}`;
-
-        API.get(`users/supervisors/${query}`)
-            .then(({ data }) => {
-                if (!isCurrentRequest) return;
-
-                const lecturers = Array.isArray(data) ? data : [];
-                setSupervisors(lecturers);
-                const matchingReviewer = lecturers.find(
-                    (lecturer) => lecturer.is_subject_match
-                );
-
-                if (matchingReviewer && !editingId) {
-                    setSupervisorId(String(matchingReviewer.user_id));
-
-                    // New publications use one reviewer only.
-                    setCoSupervisorId('');                }
-            })
-            .catch((err) => {
-                if (!isCurrentRequest) return;
-
-                console.error('Unable to load subject reviewer:', err);
-                setSupervisorError(
-                    getErrorMessage(
-                        err,
-                        'Unable to load the reviewer for this subject area.'
-                    )
-                );
-            })
-            .finally(() => {
-                if (isCurrentRequest) {
-                    setSupervisorLoading(false);
-                }
-            });
-
-        return () => {
-            isCurrentRequest = false;
-        };
-    }, [canWrite, subject, editingId]);
-
-    useEffect(() => {
         if (!showAuthorModal) return;
         let isCurrentSearch = true;
         API.get(`authors/?search=${encodeURIComponent(authorSearch)}`)
@@ -311,6 +332,11 @@ export default function Publications({ user }) {
     }, [showAuthorModal, authorSearch]);
 
     const toggleAuthor = (author) => {
+        const isSelected = selectedAuthors.some((item) => item.id === author.id);
+        if (isSingleAuthorType && !isSelected && selectedAuthors.length >= 1) {
+            setAuthorFeedback({ type: 'error', message: 'Theses and dissertations can have only one author. Remove the selected author to choose another.' });
+            return;
+        }
         setSelectedAuthors((current) => current.some((item) => item.id === author.id)
             ? current.filter((item) => item.id !== author.id)
             : [...current, author]);
@@ -351,6 +377,10 @@ export default function Publications({ user }) {
 
     const handleCreateAuthor = async (event) => {
         event.preventDefault();
+        if (isSingleAuthorType && selectedAuthors.length >= 1) {
+            setAuthorFeedback({ type: 'error', message: 'Theses and dissertations can have only one author. Remove the selected author before adding another.' });
+            return;
+        }
         setAuthorSaving(true);
         setAuthorFeedback(null);
         const firstName = authorDraft.first_name.trim();
@@ -412,6 +442,10 @@ export default function Publications({ user }) {
     const handleSave = async (e) => {
         e.preventDefault();
         setActionFeedback(null);
+        if (editingId && !hasPublicationChanges) {
+            setActionFeedback({ type: 'error', message: 'No changes were detected. Update at least one field before saving.' });
+            return;
+        }
 
         const wordCount = countWords(abstract);
         if (wordCount < 150 || wordCount > 250) {
@@ -428,8 +462,6 @@ export default function Publications({ user }) {
         formData.append('abstract', abstract);
         formData.append('pub_type', pubType);
         formData.append('subject_area', subject);
-        if (editingId && canChangeSupervisor) formData.append('supervisor', supervisorId);
-        if (editingId && canChangeCoSupervisor) formData.append('co_supervisor', coSupervisorId);
         selectedAuthors.forEach((author) => formData.append('authors', author.id));
         if (file) formData.append('file_attachment', file);
 
@@ -448,11 +480,22 @@ export default function Publications({ user }) {
                 type: 'success',
                 message: `${editingId ? 'Publication changes saved successfully and resubmitted for review.' : 'Publication submitted successfully and is pending review.'}${reviewerAssignment}${response.data.notification_warning ? ` ${response.data.notification_warning}` : ''}`,
             });
+            if (editingId) {
+                setPublicationHistory((current) => {
+                    const next = { ...current };
+                    delete next[editingId];
+                    return next;
+                });
+            }
             clearForm();
             setShowSubmissionForm(false);
             await refreshPublications();
         } catch (err) {
-            console.error('Unable to save publication:', err);
+            console.error('Unable to save publication:', {
+                status: err.response?.status,
+                response: err.response?.data,
+                error: err.message,
+            });
             setActionFeedback({ type: 'error', message: getErrorMessage(err, 'Publication could not be saved. Please try again.') });
         } finally {
             setPublicationSaving(false);
@@ -530,6 +573,60 @@ export default function Publications({ user }) {
                                 </button>
                             )}
                         </div>
+                        {user && profileActivity && (
+                            <section aria-label="Your repository activity" style={{ display: 'grid', gap: '8px' }}>
+                                <h3 style={{ margin: 0, color: '#64748b', fontSize: '.72rem', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.05em' }}>Your repository activity</h3>
+                                <div style={{ display: 'flex', gap: '9px', overflowX: 'auto', paddingBottom: '2px' }}>
+                                    {[
+                                        { label: 'Uploaded', value: profileActivity.uploaded_materials, icon: <BookOpenCheck size={17} />, filter: 'ALL' },
+                                        { label: 'Approved', value: profileActivity.approved_materials, icon: <BarChart3 size={17} />, filter: 'APPROVED' },
+                                        { label: 'Pending review', value: profileActivity.pending_review_materials, icon: <Clock3 size={17} />, filter: 'PENDING' },
+                                        { label: 'Feedback', value: profileActivity.feedback_materials, icon: <MessageSquareText size={17} />, filter: 'REVISION_REQUESTED' },
+                                        { label: 'Downloads', value: profileActivity.total_downloads, icon: <Download size={17} /> },
+                                        { label: 'Delete requests', value: profileActivity.pending_deletion_requests, icon: <Trash2 size={17} />, filter: 'DELETE_REQUEST' },
+                                    ].map(({ label, value, icon, filter }) => {
+                                        const content = <>
+                                            <span style={{ display: 'grid', placeItems: 'center', color: '#0369a1' }}>{icon}</span>
+                                            <span style={{ display: 'grid', gap: '2px' }}>
+                                                <strong style={{ color: '#1e293b', fontSize: '.92rem', lineHeight: 1.1 }}>{value ?? 0}</strong>
+                                                <span style={{ color: '#64748b', fontSize: '.7rem', whiteSpace: 'nowrap' }}>{label}</span>
+                                            </span>
+                                        </>;
+                                        const selected = filter === 'ALL'
+                                            ? !activityStatusFilter
+                                            : filter === activityStatusFilter;
+                                        const tileStyle = {
+                                            minWidth: '140px',
+                                            flex: '1 0 0',
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            gap: '9px',
+                                            padding: '10px 12px',
+                                            border: `1px solid ${filter && selected ? '#0284c7' : '#e2e8f0'}`,
+                                            borderRadius: '6px',
+                                            background: filter && selected ? '#eff6ff' : '#f8fafc',
+                                            boxSizing: 'border-box',
+                                            textAlign: 'left',
+                                            font: 'inherit',
+                                        };
+                                        return filter ? (
+                                            <button
+                                                key={label}
+                                                type="button"
+                                                onClick={() => filterByActivity(filter)}
+                                                aria-pressed={selected}
+                                                title={filter === 'DELETE_REQUEST' ? 'Find publications available for a deletion request' : `Show ${label.toLowerCase()} publications`}
+                                                style={{ ...tileStyle, cursor: 'pointer' }}
+                                            >
+                                                {content}
+                                            </button>
+                                        ) : (
+                                            <div key={label} style={tileStyle}>{content}</div>
+                                        );
+                                    })}
+                                </div>
+                            </section>
+                        )}
                         <label htmlFor="publication-search" style={{ display: 'flex', alignItems: 'center', gap: '7px', color: '#334155', fontSize: '.88rem', fontWeight: 700 }}>
                             <Search size={16} aria-hidden="true" /> Search the repository
                         </label>
@@ -750,9 +847,13 @@ export default function Publications({ user }) {
                             ? <span style={{ display: 'inline-flex', alignItems: 'center', gap: '7px' }}><LoaderCircle size={15} className="publication-spinner" aria-hidden="true" /> Loading publications…</span>
                             : publicationsError
                                 ? publicationsError
-                                : user && !hasSearchFilters
+                                : activityStatusFilter
+                                    ? activityStatusFilter === 'DELETE_REQUEST'
+                                        ? `Showing ${visiblePublications.length} publication${visiblePublications.length === 1 ? '' : 's'} eligible for a deletion request.`
+                                        : `Showing ${visiblePublications.length} ${activityStatusLabels[activityStatusFilter]} publication${visiblePublications.length === 1 ? '' : 's'}.`
+                                    : user && !hasSearchFilters
                                     ? `Showing your ${publications.length} personal publication${publications.length === 1 ? '' : 's'}. Search or apply a filter to browse the repository.`
-                                    : `Showing ${publications.length} result${publications.length === 1 ? '' : 's'}${search.trim() ? ` for “${search.trim()}”` : ''}.`}
+                                        : `Showing ${visiblePublications.length} result${visiblePublications.length === 1 ? '' : 's'}${search.trim() ? ` for “${search.trim()}”` : ''}.`}
                     </p>
     
             {actionFeedback && (
@@ -761,17 +862,21 @@ export default function Publications({ user }) {
                         </p>
                     )}
                     {/* Timeline Loop */}
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-                        {!publicationsLoading && !publicationsError && publications.length === 0 && (
+                    <div id="publication-results" style={{ display: 'flex', flexDirection: 'column', gap: '16px', scrollMarginTop: '16px' }}>
+                        {!publicationsLoading && !publicationsError && visiblePublications.length === 0 && (
                             <p style={{ margin: 0, padding: '20px', border: '1px solid #e2e8f0', borderRadius: '8px', background: '#fff', color: '#64748b', textAlign: 'center' }}>
-                                {hasSearchFilters
+                                {activityStatusFilter === 'DELETE_REQUEST'
+                                    ? 'No publications are currently eligible for a deletion request.'
+                                    : activityStatusFilter
+                                    ? `There are no ${activityStatusLabels[activityStatusFilter]} publications in your repository.`
+                                    : hasSearchFilters
                                     ? 'No publications match these search filters. Try changing or clearing your filters.'
                                     : user
                                         ? 'Your personal repository is empty. Search or apply a filter to browse available repository publications.'
                                         : 'No publications are available yet.'}
                             </p>
                         )}
-                        {publications && publications.map(pub => (
+                        {visiblePublications.map(pub => (
                             <article id={`publication-${pub.id}`} key={pub.id} style={{
                                 backgroundColor: '#fff', padding: '20px', borderRadius: '8px',
                                 border: '1px solid #e2e8f0', boxShadow: '0 1px 3px rgba(0,0,0,0.04)'
@@ -809,7 +914,7 @@ export default function Publications({ user }) {
                                             ● {({
                                                 PENDING_INVITATIONS: 'Waiting for reviewer responses',
                                                 PENDING: 'Pending review',
-                                                REVIEWER_DECLINED: 'Reviewers declined — choose again',
+                                                REVIEWER_DECLINED: 'Predefined reviewer declined — contact administrator',
                                                 REVISION_REQUESTED: 'Revisions requested',
                                                 APPROVED: 'Approved',
                                             })[pub.review_status] || 'Pending review'}
@@ -833,10 +938,24 @@ export default function Publications({ user }) {
                                     {pub.is_owner && (
                                         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '8px' }}>
                                             <div style={{ display: 'flex', gap: '8px' }}>
+                                                <button
+                                                    type="button"
+                                                    title="View publication change history"
+                                                    aria-label={`View change history for ${pub.title}`}
+                                                    aria-expanded={expandedHistoryId === pub.id}
+                                                    onClick={() => togglePublicationHistory(pub.id)}
+                                                    style={iconButtonStyle}
+                                                >
+                                                    <History size={17} aria-hidden="true" />
+                                                </button>
                                                 {!pub.is_approved && pub.review_status !== 'APPROVED' && (
                                                     <>
                                                         <button title="Edit publication" aria-label="Edit publication" onClick={() => startEditing(pub)} style={iconButtonStyle}><Pencil size={17} aria-hidden="true" /></button>
-                                                        <button type="button" title="Request publication deletion" aria-label="Request publication deletion" disabled={pendingAction === `delete-${pub.id}`} onClick={() => handleDeletionRequest(pub)} style={{ ...iconButtonStyle, color: '#b91c1c', cursor: pendingAction === `delete-${pub.id}` ? 'wait' : 'pointer' }}>{pendingAction === `delete-${pub.id}` ? <LoaderCircle size={17} className="publication-spinner" aria-hidden="true" /> : <Trash2 size={17} aria-hidden="true" />}</button>
+                                                        {pub.has_pending_deletion_request ? (
+                                                            <span role="status" style={{ alignSelf: 'center', color: '#9a3412', fontSize: '.76rem' }}>Deletion request pending</span>
+                                                        ) : (
+                                                            <button type="button" title="Request publication deletion" aria-label="Request publication deletion" disabled={pendingAction === `delete-${pub.id}`} onClick={() => handleDeletionRequest(pub)} style={{ ...iconButtonStyle, color: '#b91c1c', cursor: pendingAction === `delete-${pub.id}` ? 'wait' : 'pointer' }}>{pendingAction === `delete-${pub.id}` ? <LoaderCircle size={17} className="publication-spinner" aria-hidden="true" /> : <Trash2 size={17} aria-hidden="true" />}</button>
+                                                        )}
                                                     </>
                                                 )}
                                             </div>
@@ -846,15 +965,72 @@ export default function Publications({ user }) {
                                                 {pub.review_invitations.map((invitation) => (
                                                     <div key={invitation.id} style={{ marginTop: '4px' }}>
                                                         {invitation.reviewer_name} ({invitation.role === 'CO_SUPERVISOR' ? 'co-supervisor' : 'supervisor'}: {invitation.status.toLowerCase().replace('_', ' ')}{invitation.status === 'ACCEPTED' ? `, ${invitation.decision.toLowerCase().replace('_', ' ')}` : ''})
-                                                        {invitation.feedback && <div style={{ margin: '3px 0 5px 8px', whiteSpace: 'pre-wrap' }}>Feedback: {invitation.feedback}</div>}
+                                                       
                                                     </div>
                                                 ))}
                                             </div>
                                         )}
                                         </div>
                                     )}
-                                    </div>
+                                    </div> 
                                 </div>
+                                {pub.is_owner && expandedHistoryId === pub.id && (
+                                    <section aria-label={`Change history for ${pub.title}`} style={{ marginTop: '14px', paddingTop: '12px', borderTop: '1px solid #e2e8f0' }}>
+                                        <h4 style={{ margin: '0 0 10px', color: '#334155', fontSize: '.9rem' }}>Change history</h4>
+                                        {historyLoadingId === pub.id ? (
+                                            <p role="status" style={{ margin: 0, color: '#64748b', fontSize: '.84rem' }}>Loading history…</p>
+                                        ) : historyError ? (
+                                            <p role="alert" style={{ margin: 0, color: '#b91c1c', fontSize: '.84rem' }}>{historyError}</p>
+                                        ) : publicationHistory[pub.id]?.length ? (
+                                            <ol style={{ display: 'grid', gap: '8px', margin: 0, paddingLeft: '22px' }}>
+                                                {publicationHistory[pub.id].map((version) => (
+                                                    <li key={version.id} style={{ color: '#475569', fontSize: '.84rem' }}>
+                                                        <details>
+                                                            <summary style={{ cursor: 'pointer', color: '#334155', fontWeight: 600 }}>
+                                                                Version {version.version_number} · archived {new Date(version.created_at).toLocaleString()} by {version.changed_by}
+                                                            </summary>
+                                                            <div style={{ marginTop: '8px', padding: '10px 12px', background: '#f8fafc', borderRadius: '5px', lineHeight: 1.5, overflowWrap: 'anywhere' }}>
+                                                                <div style={{ marginBottom: '10px' }}>
+                                                                    <strong>Changes in this update</strong>
+                                                                    {version.changes?.length ? (
+                                                                        <ul style={{ display: 'grid', gap: '6px', margin: '5px 0 0', paddingLeft: '20px' }}>
+                                                                            {version.changes.map((change) => (
+                                                                                <li key={change.field}>
+                                                                                    <strong>{change.field}:</strong>{' '}
+                                                                                    {change.field === 'Abstract' ? (
+                                                                                        <details>
+                                                                                            <summary style={{ display: 'inline', cursor: 'pointer', color: '#0369a1' }}>Compare previous and updated text</summary>
+                                                                                            <p style={{ margin: '6px 0' }}><strong>Previous:</strong> {change.from}</p>
+                                                                                            <p style={{ margin: '6px 0' }}><strong>Updated:</strong> {change.to}</p>
+                                                                                        </details>
+                                                                                    ) : (
+                                                                                        <><del>{change.from}</del>{' '}<span>to</span>{' '}<ins>{change.to}</ins></>
+                                                                                    )}
+                                                                                </li>
+                                                                            ))}
+                                                                        </ul>
+                                                                    ) : (
+                                                                        <p style={{ margin: '5px 0 0', color: '#64748b' }}>No publication fields changed in this update.</p>
+                                                                    )}
+                                                                </div>
+                                                                <p style={{ margin: '0 0 5px' }}><strong>Title:</strong> {version.snapshot.title}</p>
+                                                                <p style={{ margin: '0 0 5px' }}><strong>Type:</strong> {version.snapshot.pub_type} · <strong>Subject:</strong> {version.snapshot.subject_area}</p>
+                                                                <p style={{ margin: '0 0 5px' }}><strong>Authors:</strong> {version.snapshot.authors.map((author) => author.name).join('; ') || 'None listed'}</p>
+                                                                <p style={{ margin: '0 0 5px' }}><strong>Reviewers:</strong> {version.snapshot.reviewers.map((reviewer) => `${reviewer.name} (${reviewer.role})`).join('; ') || 'None assigned'}</p>
+                                                                <p style={{ margin: '0 0 5px', whiteSpace: 'pre-wrap' }}><strong>Abstract:</strong> {version.snapshot.abstract}</p>
+                                                                {version.snapshot.file_attachment_url && (
+                                                                    <a href={version.snapshot.file_attachment_url} target="_blank" rel="noreferrer" style={{ color: '#0369a1' }}>View previous manuscript</a>
+                                                                )}
+                                                            </div>
+                                                        </details>
+                                                    </li>
+                                                ))}
+                                            </ol>
+                                        ) : (
+                                            <p style={{ margin: 0, color: '#64748b', fontSize: '.84rem' }}>No previous versions have been recorded yet. Future edits will appear here.</p>
+                                        )}
+                                    </section>
+                                )}
                                 {pub.is_owner && pub.review_feedback && (
                                     <div role="note" style={{ marginTop: '12px', padding: '11px 13px', borderLeft: '3px solid #c2410c', background: '#fff7ed', color: '#7c2d12', fontSize: '0.84rem', lineHeight: 1.5 }}>
                                         <strong>Supervisor feedback:</strong> {pub.review_feedback}
@@ -880,6 +1056,11 @@ export default function Publications({ user }) {
                              
                             <button type="button" title="Close form" aria-label="Close publication form" onClick={() => setShowSubmissionForm(false)} style={iconButtonStyle}><X size={18} /></button>
                         </div>
+                        {actionFeedback && (
+                            <p role={actionFeedback.type === 'error' ? 'alert' : 'status'} style={feedbackStyle(actionFeedback.type)}>
+                                {actionFeedback.message}
+                            </p>
+                        )}
              
                         <form onSubmit={handleSave} style={{ display: 'flex', minHeight: 0, flexDirection: 'column', gap: '16px', overflowY: 'auto', overscrollBehavior: 'contain', padding: '2px' }}>
                         
@@ -891,6 +1072,7 @@ export default function Publications({ user }) {
                             </button>
                         </div>
                         {selectedAuthors.length > 0 && <p style={{ margin: '-8px 0 0', color: '#475569', fontSize: '0.8rem' }}>Authors: {selectedAuthors.map((author) => author.name || `${author.first_name} ${author.last_name}`).join('; ')}</p>}
+                        {isSingleAuthorType && <p style={{ margin: '-8px 0 0', color: '#0369a1', fontSize: '.8rem' }}>Theses and dissertations can have one author only.</p>}
                         <div>
                             <label htmlFor="publication-subject" style={labelStyle}>
                                 Subject Area (required)
@@ -913,66 +1095,28 @@ export default function Publications({ user }) {
                             </select>
                         </div>
                         <div>
-                            {editingId && (canChangeSupervisor || canChangeCoSupervisor) ? (
-                                <>
-                                    <p style={{ ...labelStyle, margin: '0 0 6px' }}>Reviewer assignments</p>
-                                    {canChangeSupervisor && (
-                                        <>
-                                            <label htmlFor="publication-reviewer" style={labelStyle}>Lecturer supervisor (required)</label>
-                                            <select id="publication-reviewer" value={supervisorId} onChange={(event) => setSupervisorId(event.target.value)} required style={formInputStyle}>
-                                                <option value="">Select a lecturer supervisor</option>
-                                                {supervisors.map((lecturer) => <option key={lecturer.user_id} value={lecturer.user_id}>{lecturer.name} — {lecturer.department}</option>)}
-                                            </select>
-                                            <p style={{ margin: '4px 0 10px', color: '#64748b', fontSize: '.78rem' }}>
-                                                The current supervisor {supervisorInvitation?.status === 'DECLINED' ? 'declined the invitation' : 'has not responded'}; you may reassign this role.
-                                            </p>
-                                        </>
-                                    )}
-                                    {canChangeCoSupervisor && (
-                                        <>
-                                            <label htmlFor="publication-co-supervisor" style={labelStyle}>Co-supervisor (optional)</label>
-                                            <select id="publication-co-supervisor" value={coSupervisorId} onChange={(event) => setCoSupervisorId(event.target.value)} style={formInputStyle}>
-                                                <option value="">No co-supervisor</option>
-                                                {supervisors.filter((lecturer) => String(lecturer.user_id) !== supervisorId).map((lecturer) => <option key={lecturer.user_id} value={lecturer.user_id}>{lecturer.name} — {lecturer.department}</option>)}
-                                            </select>
-                                            <p style={{ margin: '4px 0 10px', color: '#64748b', fontSize: '.78rem' }}>
-                                                The current co-supervisor {coSupervisorInvitation?.status === 'DECLINED' ? 'declined the invitation' : 'has not responded'}; you may reassign this role.
-                                            </p>
-                                        </>
-                                    )}
-                                </>
-                            ) : editingId ? (
-                                <p style={{ margin: 0, color: '#475569', fontSize: '.85rem' }}>
-                                    Reviewers have responded or accepted their invitations. Reviewer assignments are locked while review is in progress.
-                                </p>
-                            ) : !subject.trim() && !editingId ? (
-                                <p style={{ margin: 0, color: '#64748b', fontSize: '0.85rem' }}>
-                                    Select a subject area to see the assigned reviewer.
-                                </p>
-                            ) : supervisorLoading ? (
-                                <p role="status" style={{ color: '#64748b', fontSize: '0.85rem' }}>
-                                    <LoaderCircle
-                                        size={15}
-                                        className="publication-spinner"
-                                        aria-hidden="true"
-                                    />{' '}
-                                    Finding assigned reviewer…
-                                </p>                            ) : supervisorLoading ? (
-                                <p role="status" style={{ color: '#64748b', fontSize: '0.85rem' }}><LoaderCircle size={15} className="publication-spinner" aria-hidden="true" /> Finding subject-matched supervisors…</p>
-                            ) : supervisorError ? (
-                                <p role="alert" style={{ color: '#b91c1c', fontSize: '0.85rem' }}>{supervisorError}</p>
-                            ) : rankedSupervisors.length > 0 ? (
-                                <div role="status" style={{ padding: '10px 12px', border: '1px solid #bae6fd', borderRadius: 6, background: '#f0f9ff', color: '#075985', fontSize: '.85rem' }}>
-                                    <strong>{rankedSupervisors[0].is_subject_match ? 'Reviewer matched automatically using lecturer expertise' : 'Best available lecturer selected automatically'}</strong>
-                                    <div style={{ marginTop: 5 }}>
-                                        Assigned to: {rankedSupervisors[0].name} — {rankedSupervisors[0].department}
-                                        {rankedSupervisors[0].skillset ? ` · Skills: ${rankedSupervisors[0].skillset}` : ''}
-                                    </div>
-                                </div>
-                            ) : (
-                                <p role="alert" style={{ margin: 0, color: '#b91c1c', fontSize: '0.85rem' }}>
-                                    No reviewer is mapped to this subject area. Contact an administrator to configure the subject mapping before submitting.                                				</p>
-                            )}
+                            <p
+                                role="status"
+                                style={{
+                                    margin: 0,
+                                    padding: '10px 12px',
+                                    border: '1px solid #bae6fd',
+                                    borderRadius: 6,
+                                    background: '#f0f9ff',
+                                    color: '#075985',
+                                    fontSize: '.85rem',
+                                }}
+                            >
+                                {user.role === 'STUDENT'
+                                    ? profileActivity
+                                        ? profileActivity.assigned_supervisor_name
+                                            ? `Your publication will be submitted to ${profileActivity.assigned_supervisor_name}.`
+                                            : 'No active supervisor is assigned to your university record. Contact an administrator before submitting.'
+                                        : 'Loading your assigned supervisor…'
+                                    : editingId
+                                        ? 'The reviewer assigned to this publication cannot be changed here.'
+                                        : 'Your supervisor will be selected based on the subject area and lecturer expertise.'}
+                            </p>
                         </div>
 
                         <div>
@@ -1031,7 +1175,20 @@ export default function Publications({ user }) {
                         </div>
                         <div>
                             <label htmlFor="publication-type" style={labelStyle}>Publication Type (required)</label>
-                            <select id="publication-type" value={pubType} onChange={e => setPubType(e.target.value)} required style={formInputStyle}>
+                            <select
+                                id="publication-type"
+                                value={pubType}
+                                onChange={(event) => {
+                                    const nextType = event.target.value;
+                                    setPubType(nextType);
+                                    if (['THESIS', 'DISSERTATION'].includes(nextType) && selectedAuthors.length > 1) {
+                                        setSelectedAuthors((current) => current.slice(0, 1));
+                                        setActionFeedback({ type: 'success', message: 'Theses and dissertations allow one author. Additional authors were removed.' });
+                                    }
+                                }}
+                                required
+                                style={formInputStyle}
+                            >
                                 {user.role === 'STUDENT' ? (<><option value="THESIS">Thesis</option> <option value="DISSERTATION">Dissertation</option></>) :  (<><option value="JOURNAL">Journal</option> <option value="CONFERENCE">Conference Paper</option></>) }
 
                             </select>
@@ -1044,9 +1201,14 @@ export default function Publications({ user }) {
                             )}
                         </div>
                         <div style={{ display: 'flex', gap: '12px' }}>
+                            {editingId && !hasPublicationChanges && (
+                                <p role="status" style={{ margin: 0, alignSelf: 'center', color: '#64748b', fontSize: '.82rem' }}>
+                                    Make a change to enable updating.
+                                </p>
+                            )}
                             <button
                                 type="submit"
-                                disabled={publicationSaving || !isAbstractWordCountValid || (!editingId && (!subject.trim() || supervisorLoading || Boolean(supervisorError) || supervisors.length === 0))}
+                                disabled={publicationSaving || !isAbstractWordCountValid || (!editingId && !subject.trim()) || Boolean(editingId && !hasPublicationChanges)}
                                 title={!isAbstractWordCountValid ? `Abstract must be between 150 and 250 words (currently ${abstractWordCount} words)` : ''}
                                 style={{
                                     padding: '10px 16px',
@@ -1096,6 +1258,7 @@ export default function Publications({ user }) {
                         <div>
                             <h2 id="author-modal-title" style={{ margin: 0, fontSize: '1.15rem', color: '#1e293b' }}>Publication authors</h2>
                             <p style={{ margin: '4px 0 0', color: '#64748b', fontSize: '0.82rem' }}>{selectedAuthors.length} selected for this record</p>
+                            {isSingleAuthorType && <p style={{ margin: '4px 0 0', color: '#0369a1', fontSize: '.8rem' }}>Theses and dissertations can have one author only.</p>}
                         </div>
                         <button type="button" title="Close author dialog" aria-label="Close author dialog" onClick={() => setShowAuthorModal(false)} style={iconButtonStyle}><X size={18} /></button>
                     </header>
