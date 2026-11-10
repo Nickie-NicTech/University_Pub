@@ -6,7 +6,7 @@ CSI605 group project, Group 2, Department of Computer Science, Faculty of Natura
 
 ## Documentation
 
-Project documentation, including requirements, analysis and design, increments, testing and traceability, is in the [`docs/`](docs/) folder:
+Project documentation, including requirements, analysis and design, increments, testing and traceability
 
 ## Team
 
@@ -38,7 +38,7 @@ Set `DJANGO_SECRET_KEY` and `UNIPUB_ADMIN_PASSWORD` as process environment varia
 
 ```
 $env:DJANGO_SECRET_KEY = "<a generated random secret>"
-$env:UNIPUB_ADMIN_PASSWORD = "admin"
+$env:UNIPUB_ADMIN_PASSWORD = "<choose a strong password>"
 ```
 
 Configure `EMAIL_HOST`, `EMAIL_HOST_USER`, `EMAIL_HOST_PASSWORD`, and `DEFAULT_FROM_EMAIL` to enable supervisor and submitter email notifications. Email is sent when a publication is submitted or resubmitted, revisions are requested, or a publication is approved.
